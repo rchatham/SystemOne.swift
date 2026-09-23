@@ -1,6 +1,8 @@
 .DS_Store
 /.build
 .swiftpm
+.venv
+
 *.o
 # Model weights are never committed (multi-GB)
 *.safetensors

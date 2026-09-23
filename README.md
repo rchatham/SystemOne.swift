@@ -6,25 +6,29 @@ inference running locally on Apple Silicon.
 
 ## Goal
 
-Run the von decision model natively in Swift, without Python, using the
+Run the von decision model natively in Swift on Apple Silicon, using the
 released von checkpoint. Built incrementally, each step verified against the
 Python von package as a reference oracle (golden test vectors).
 
-## Roadmap
+## Stack
 
-- [ ] Step 0: Install von locally; capture golden reference outputs
-- [ ] Step 1: Clone von source; map the model architecture
-- [ ] Step 2: Tokenizer parity (HF `tokenizer.json` in Swift)
-- [ ] Step 3: Weight loading (safetensors)
-- [ ] Step 4: ModernBERT backbone in Swift
-- [ ] Step 5: Decision head + calibrated softmax
-- [ ] Step 6: Public API — `decide`, `judge`, `rate`, `systemOne`
-- [ ] Step 7: HTTP server, `/v1/systemone` parity
-- [ ] Step 8: Golden-test parity vs. Python von
+- **Swift** owns the shell: tokenizer, safetensors loading, decision head,
+  public API, HTTP server
+- **MLX Swift** (`ml-explore/mlx-swift`) owns the tensor math: ModernBERT
+  backbone on Apple Silicon GPU
+- **Python von** (repo-local `.venv`) is the reference oracle generating
+  golden test vectors at every step
+
+## Docs
+
+- [docs/PLAN.md](docs/PLAN.md) — phased plan with status
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how von actually works
+- [docs/HANDOFF.md](docs/HANDOFF.md) — resume-here state for fresh sessions
 
 ## Status
 
-Scaffold. See commits for progress.
+Phase 0 (recon + oracle setup) done; Phase 1 (golden capture) next.
+See commits and the plan for progress.
 
 ## License
 
