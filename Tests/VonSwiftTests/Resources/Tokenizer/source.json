@@ -1,0 +1,9 @@
+{
+  "source": "https://huggingface.co/wfzyx/von",
+  "revision": "d8bb5e0745d8ee1fb65d536d6d4892d54d5a93fd",
+  "license": "Apache-2.0",
+  "files": {
+    "tokenizer.json": "3703d011b3ee259e00b59b60772f8fd54998d79e8fa5a1388d507eff28f8f09e",
+    "tokenizer_config.json": "57170b72a72c60407eec1f7894000c567309a8e41c5d0504b946c624cb069984"
+  }
+}
