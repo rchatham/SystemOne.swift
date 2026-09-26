@@ -2,6 +2,8 @@
 /.build
 .swiftpm
 .venv
+__pycache__/
+*.pyc
 
 *.o
 # Model weights are never committed (multi-GB)
