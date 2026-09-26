@@ -1,8 +1,9 @@
 # Von Architecture (reference map for the Swift port)
 
-Everything in this doc is verified against the von source clone at
-`~/Developer/von` (commit of `master`, Apache-2.0) and the cached checkpoint at
-`~/.cache/huggingface/hub/models--wfzyx--von/`.
+Everything in this doc is verified against von source revision
+`6c3c095d03ce78a546cb197df490be9a56c1ad3e` (Apache-2.0) and local
+`wfzyx/von` checkpoint revision
+`d8bb5e0745d8ee1fb65d536d6d4892d54d5a93fd`.
 
 ## What von is
 
@@ -59,15 +60,15 @@ bidirectional attention — one pass instead of K cross-encoder passes.
 | hidden_size | 1024 |
 | num_hidden_layers | 28 |
 | num_attention_heads | 16 |
-| intermediate_size | 2624 |
+| intermediate_size | 2624 per gate branch (5248 combined `Wi` output) |
 | vocab_size | 50368 |
-| max_position_embeddings | 2048 (code default claims 8192, shipped config says 2048) |
-| local_attention window | 128 |
+| max_position_embeddings | 2048 in the artifact; overridden to 8192 by `OptionMarkerModel` before encoder construction |
+| local_attention window | 128 (`config.sliding_window` radius 64; inclusive CPU mask covers up to 129 positions) |
 | global_attn_every_n_layers | 3 |
 | layer_types | layer 0,3,6,... full_attention; others sliding_attention |
 | RoPE θ | 160000.0 (full attn), 10000.0 (sliding attn) |
-| position_embedding_type | absolute (learned position embeddings + RoPE hybrid) |
-| norm_bias / mlp_bias / attention_bias | all **false** |
+| embedding implementation | token embedding → LayerNorm → dropout; **no learned absolute position embedding** |
+| norm_bias / mlp_bias / attention_bias | all **false** in the backbone |
 | hidden_activation | gelu |
 | dtype | float32 |
 | tie_word_embeddings | true |
@@ -77,23 +78,33 @@ ModernBERT specifics to replicate carefully:
 - **Hybrid attention**: sliding-window (128) layers + full-attention layers
   every third layer (indices 0, 3, 6, …, 27).
 - **RoPE on every attention layer**, with different θ for the two layer types.
-- **Learned absolute position embeddings** (token_pos embeddings) in the
-  embedding layer, in addition to RoPE.
-- **Bias-free**: LayerNorm without bias (`norm_bias: false`), attention and MLP
-  projections without biases.
-- `norm_eps` = 1e-05, `layer_norm_eps` = 1e-05.
+  Position ids are absolute `arange(sequence_length)` positions, including in
+  sliding-attention layers; they are not window-relative.
+- **No learned absolute position embeddings**: despite the artifact's legacy
+  `position_embedding_type: "absolute"` field, the installed ModernBERT
+  embedding module contains only token embeddings, LayerNorm, and dropout.
+- **Gated MLP**: bias-free `Wi: 1024 → 5248`, split into `input` and `gate`
+  tensors of width 2624, then `GELU(input) * gate`, MLP dropout (0.0), and
+  bias-free `Wo: 2624 → 1024`.
+- **Bias-free backbone**: LayerNorm has no bias (`norm_bias: false`), and the
+  attention and MLP projections have no biases. `norm_eps` is `1e-05`.
 
 ### 3. Scorer head (`OptionMarkerScorer`)
 
 ```
 x (K, 1024)
-  → LayerNorm(1024)
-  → Linear(1024 → 512), no bias
+  → LayerNorm(1024), affine weight + bias
+  → Linear(1024 → 512), with bias
   → GELU
-  → LayerNorm(512)
-  → Linear(512 → 1), no bias
+  → LayerNorm(512), affine weight + bias
+  → Dropout(p=0.1; disabled by model.eval() during production inference)
+  → Linear(512 → 1), with bias
   → squeeze → (K,) logits
 ```
+
+The scorer is ordinary PyTorch `LayerNorm`/`Linear`, so its affine norms and
+linear biases are present even though the ModernBERT backbone is configured
+without norm/projection biases.
 
 ### 4. Calibration (`marker_calibration.json` shipped in the repo)
 
@@ -149,25 +160,63 @@ Notes:
 
 | File | Size | Role |
 |---|---|---|
-| `model.safetensors` | 1.58 GB | ModernBERT-large encoder (+ unused classifier/head keys) |
-| `option_marker.pt` | 1.58 GB | Full OptionMarkerModel state_dict (encoder + scorer), loaded strict |
+| `model.safetensors` | 1.58 GB | Base ModernBERT plus an unrelated classifier; contains no custom scorer tensors |
+| `option_marker.pt` | 1.58 GB | Production OptionMarker state dict: 170 `encoder.*` + eight `scorer.*` tensors, loaded strict |
 | `marker_calibration.json` | <1 KB | temperature + calibration_map |
 | `tokenizer.json` | 3.6 MB | HF fast tokenizer (byte-level BPE) |
+| `tokenizer_config.json` | <1 KB | Tokenizer class and special-token behavior |
 | `config.json` | 6 KB | ModernBERT config (table above) |
 
-Special token ids: CLS/BOS = 50281, SEP/EOS = 50282, PAD = 50283,
-MASK = 50284 (from tokenizer config).
+Phase 1 validates the exact SHA-256 of all six consumed files before loading
+them; the pinned values are recorded in `testdata/von_golden_v1.json`.
+Production first constructs the base model, then strictly overlays the complete
+encoder and scorer from `option_marker.pt`. The 170 corresponding encoder
+values differ between the two files, so a parity implementation must convert
+and load `option_marker.pt`; the released `model.safetensors` alone is not a
+production-equivalent weight source.
+
+Tokenizer special-token ids are CLS = 50281, SEP = 50282, PAD = 50283,
+and MASK = 50284. Its `bos_token` and `eos_token` are both `None`; only the
+model config aliases `bos_token_id` to 50281 and `eos_token_id` to 50282.
+
+## Phase 1 golden capture
+
+`tools/golden_capture.py` invokes the production `evaluate_choice`,
+`evaluate_noul`, and `evaluate_score` paths on one CPU float32 backend/model.
+The four cases produce five real model forwards because default Noul also runs
+a context-free null pass. Each forward records packed text, token ids,
+attention mask, mask positions, and raw logits.
+
+Backbone probes have 30 ordered entries: embeddings, post-layer outputs 0–27,
+and the separate `final_norm` output. Installed Transformers 5.17's public
+`hidden_states` tuple has 29 entries because it replaces raw post-layer 27 with
+`last_hidden_state`; explicit hooks retain both boundaries. `final_norm` is the
+post-layer-27 normalized `last_hidden_state` consumed by the scorer and stores
+every complete K×1024 mask state; all 30 entries store the same 16 probe
+dimensions at every mask position.
+
+The fixture also preserves unrounded calibration/debias/postprocessing math
+and exact Pydantic production-answer serialization. Output-affecting runtime
+pins are CPython 3.12.8, von-sdk 1.1.1 (module version 1.0.1), Torch 2.14.0,
+Transformers 5.17.0, Tokenizers 0.23.2, huggingface-hub 1.32.0, Pydantic 2.13.5,
+pydantic-core 2.46.5, and safetensors 0.8.0. `--check` compares canonical bytes
+first, then permits only finite float-leaf drift within absolute `1e-5` /
+relative `1e-6`; structure, order, scalar types, and non-floats remain exact.
 
 ## Porting notes / risk areas
 
 1. **Tokenizer parity** is the highest-risk item — byte-level BPE with
    ModernBERT's pre-tokenization regex must match exactly, or everything
    downstream diverges. Verify token ids against goldens before anything else.
-2. **Sliding-window attention semantics**: window 128 around each token, with
-   RoPE positions relative to the window — check `transformers`' ModernBERT
-   implementation for the exact masking/position convention.
-3. **RoPE + absolute position embeddings coexisting** — ModernBERT quirk.
-4. **Null-state debiasing** is easy to miss; it materially changes noul outputs
-   when no explicit criteria are given.
+2. **Sliding-window attention semantics**: on the CPU oracle,
+   `local_attention=128` produces an inclusive `abs(query-key) <= 64` mask, or
+   up to 129 positions for an interior token. The module's separate value 65 is
+   a FlashAttention adapter detail, not the effective CPU radius. RoPE still
+   uses absolute sequence positions.
+3. **Weight provenance**: convert the production `option_marker.pt` encoder and
+   scorer tensors deterministically to safetensors before Swift loading; do not
+   substitute the released base-model safetensors.
+4. **Null-state debiasing** is easy to miss; it materially changes Noul outputs
+   only when neither explicit criterion description is truthy.
 5. float32 everywhere first; consider fp16/bf16 later for speed, but parity
    tests must run in the same precision as the goldens.

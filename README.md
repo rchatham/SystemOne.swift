@@ -14,6 +14,8 @@ Python von package as a reference oracle (golden test vectors).
 
 - **Swift** owns the shell: tokenizer, safetensors loading, decision head,
   public API, HTTP server
+- **swift-transformers** `Tokenizers` 1.1.6 provides the pinned byte-level BPE
+  engine behind VonSwift's local-only tokenizer wrapper
 - **MLX Swift** (`ml-explore/mlx-swift`) owns the tensor math: ModernBERT
   backbone on Apple Silicon GPU
 - **Python von** (repo-local `.venv`) is the reference oracle generating
@@ -27,8 +29,31 @@ Python von package as a reference oracle (golden test vectors).
 
 ## Status
 
-Phase 0 (recon + oracle setup) done; Phase 1 (golden capture) next.
-See commits and the plan for progress.
+Phases 0–2 are done. The pinned CPU float32 Python oracle fixture is at
+`testdata/von_golden_v1.json`; the Swift tokenizer matches all five golden
+forwards exactly, including the 541-token Unicode input. Phase 3 (deterministic
+weight conversion and loading) is next.
+
+The exact Apache-2.0 `wfzyx/von` tokenizer files are checked in as Swift test
+resources with revision and SHA-256 provenance in
+`Tests/VonSwiftTests/Resources/Tokenizer/source.json`. Runtime tokenization
+loads only an explicitly supplied local folder and has no model-name/network
+API.
+
+Build and verify with:
+
+```bash
+swift package resolve
+swift build
+swift test
+.venv/bin/python tools/golden_capture.py --check
+python3 -m unittest discover -s Tests -p 'test_*.py'
+```
+
+Golden generation validates the pinned von source revision, local Hugging Face
+model revision, exact oracle dependency versions, and all six consumed artifact
+hashes before loading one production backend and model. `--check` does not
+rewrite the fixture.
 
 ## License
 
