@@ -190,7 +190,8 @@ private extension VonTokenizerTests {
     }
 
     func tokenizerResourceURL() -> URL {
-        Bundle.module.bundleURL.appendingPathComponent("Tokenizer", isDirectory: true)
+        (Bundle.module.resourceURL ?? Bundle.module.bundleURL)
+            .appendingPathComponent("Tokenizer", isDirectory: true)
     }
 
     func loadGoldenFixture() throws -> GoldenFixture {
