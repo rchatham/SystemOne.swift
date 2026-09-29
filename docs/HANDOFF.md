@@ -23,8 +23,8 @@ Read these first, in order:
 | 0 — Recon & oracle setup | ✅ done |
 | 1 — Golden test vector capture | ✅ done |
 | 2 — Tokenizer in Swift | ✅ done |
-| 3 — Weight loading (safetensors) | ⬅️ **next** |
-| 4 — ModernBERT backbone (MLX Swift) | ⬜ |
+| 3 — Weight conversion and loading (safetensors) | ✅ done |
+| 4 — ModernBERT backbone (MLX Swift) | ⬅️ **next** |
 | 5 — Decision head + calibration | ⬜ |
 | 6 — Public API | ⬜ |
 | 7 — HTTP server `/v1/systemone` | ⬜ |
@@ -86,38 +86,65 @@ license. Swift parity tests cover all five golden forwards (including the
 NFC, and empty input. Tests read these checked-in files directly and never use
 a user Hugging Face cache.
 
+## Phase 3 production weights
+
+`tools/convert_option_marker.py` deterministically converts the pinned
+`option_marker.pt` into `weights/option_marker.safetensors`: 178 float32 tensors
+(170 encoder + 8 scorer), 1,581,259,300 bytes, SHA-256
+`3cadf5c5f001e859489da2cb035aa015b5b74b8d28a384abedb9d86290419e06`.
+`testdata/option_marker_weights_manifest_v1.json` records both the pinned source
+hash and output hash; `testdata/option_marker_tensor_metadata_v1.json` records
+canonical names, shapes, offsets, sizes, and per-tensor payload hashes. Neither
+the `.pt` source nor generated safetensors payload is committed.
+
+`SafetensorsFile` strictly checks the float32 header and gap-free payload layout
+and provides retained zero-copy views over a read-only private mmap.
+`VonWeights` then checks the exact tensor names and shapes and exposes typed
+encoder/scorer groups. `VonWeights.verifiedProduction(contentsOf:)`
+additionally checks the pinned whole-file size and SHA-256 before parsing the
+same mapping. The mapped
+inode must not be mutated or truncated while the file or any view is alive.
+
 ## Build & test
+
+Resolve dependencies, then run the default checks:
 
 ```bash
 swift package resolve
 swift build
 swift test
 .venv/bin/python tools/golden_capture.py --check
-python3 -m unittest discover -s Tests -p 'test_*.py'
+.venv/bin/python -m unittest discover -s Tests -p 'test_*.py'
 ```
 
-`--check` captures in memory, compares canonical bytes first, and never rewrites
-the fixture. If bytes differ, only finite float leaves within absolute `1e-5` /
-relative `1e-6` may differ; all structure, order, types, and non-floats are exact.
+Create and verify the local converted artifact, then opt into the production
+Swift test with:
+
+```bash
+.venv/bin/python tools/convert_option_marker.py
+.venv/bin/python tools/convert_option_marker.py --check
+VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
+```
+
+The default Swift tests use checked-in resources and require no model cache or
+network. Run `.venv/bin/python tools/convert_option_marker.py --update-fixtures`
+only when intentionally replacing the canonical metadata/manifest fixtures. Both
+converter `--check` and golden-capture `--check` are non-rewriting validation.
+Golden capture permits only finite float-leaf drift within absolute `1e-5` /
+relative `1e-6`; structure, order, types, and non-floats remain exact.
 
 ## Working agreement
 
 - One phase per session where feasible; commit atomically per logical change.
 - Every phase lands with a parity test against Python von goldens.
-- Never commit weights, `.venv`, or `.build`. Golden fixtures (small JSON) are
-  committed under `testdata/`.
+- Never commit weights, `.venv`, or `.build`. Golden and weight
+  metadata/manifest fixtures (small JSON) are committed under `testdata/`.
 - Conventional Commits; see `~/.pi/agent/skills/git-conventions/SKILL.md`.
 
 ## Open questions / risks
 
-- Phase 3 deterministic conversion of the production `option_marker.pt` is
-  next; tokenizer parity is complete.
 - ModernBERT has no learned absolute position embedding; RoPE uses absolute
   sequence positions. The CPU oracle's sliding mask has inclusive radius 64
   (up to 129 positions) for `local_attention=128`; the module's separate 65 is
   only a FlashAttention adapter detail.
-- The released `model.safetensors` has no custom scorer and its encoder values
-  differ from the production overlay. Phase 3 must deterministically convert
-  all 170 `encoder.*` and eight `scorer.*` tensors from `option_marker.pt` to a
-  validated Swift-loadable safetensors artifact.
 - float32 parity first; performance precision changes later.

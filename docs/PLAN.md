@@ -64,19 +64,43 @@ python3 -m unittest discover -s Tests -p 'test_*.py'
       five forwards, all four state counts, Python empty-state semantics,
       whitespace/special-token behavior, NFC, and the 541-token Unicode input
 
-### Phase 3 — Weight conversion and loading ⬅️ NEXT
-- [ ] Add a deterministic pinned Python conversion tool that extracts all 170
+### Phase 3 — Weight conversion and loading ✅ DONE
+- [x] Add a deterministic pinned Python conversion tool that extracts all 170
       production `encoder.*` tensors and eight `scorer.*` tensors from
-      `option_marker.pt` into a Swift-loadable safetensors artifact
-- [ ] Record and validate the pinned `option_marker.pt` source hash and generated
-      safetensors hash; reject missing, extra, renamed, shape-mismatched, or
-      non-float32 tensors
-- [ ] Add a safetensors header parser in Swift, memory-map the converted artifact,
-      and map its 178 tensors into reviewed encoder/scorer groups
-- [ ] Do not use released `model.safetensors` for parity: it has different
-      pre-OptionMarker encoder values and only an unrelated classifier head
+      `option_marker.pt` into a 1,581,259,300-byte float32 safetensors artifact
+- [x] Commit canonical manifest and per-tensor metadata fixtures under
+      `testdata/`; the manifest records the pinned source and deterministic
+      output hashes, while no source or converted weight payload is committed
+- [x] Reject missing, extra, renamed, shape-mismatched, non-float32, malformed,
+      overlapping, gapped, or hash-mismatched tensors/artifacts
+- [x] Add a strict safetensors header/layout parser and read-only mmap-backed
+      tensor views, then map the exact 178-tensor schema into typed encoder and
+      scorer groups
+- [x] Separate checked float32 format/layout and Von schema loading from
+      `VonWeights.verifiedProduction(contentsOf:)`, which additionally verifies
+      the pinned whole-file size and SHA-256 on the same mapping
+- [x] Document the immutable-inode contract—callers must not mutate or truncate
+      the mapped inode while a file or retained tensor view is alive—and test
+      retained view lifetime independently of the pathname
+- [x] Keep the released `model.safetensors` out of the parity path: it has
+      different pre-OptionMarker encoder values and only an unrelated classifier
+      head
 
-### Phase 4 — ModernBERT backbone in MLX Swift
+Fixture refresh is intentional-only; normal conversion validates against the
+fixtures, while `--check` is read-only:
+
+```bash
+.venv/bin/python tools/convert_option_marker.py
+.venv/bin/python tools/convert_option_marker.py --check
+# Intentional canonical fixture replacement only:
+.venv/bin/python tools/convert_option_marker.py --update-fixtures
+VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
+```
+
+Default Swift tests remain offline; the environment variable opts into the
+production artifact hash, schema, and per-tensor payload-hash integration test.
+
+### Phase 4 — ModernBERT backbone in MLX Swift ⬅️ NEXT
 - [ ] Embeddings: token embeddings → bias-free LayerNorm → dropout; no learned
       absolute position embeddings
 - [ ] Attention: RoPE over absolute positions (θ=160000 full / 10000 sliding),

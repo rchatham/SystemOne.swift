@@ -175,6 +175,49 @@ values differ between the two files, so a parity implementation must convert
 and load `option_marker.pt`; the released `model.safetensors` alone is not a
 production-equivalent weight source.
 
+### Phase 3 production weight artifact
+
+`tools/convert_option_marker.py` validates the pinned source before loading it
+and deterministically emits one float32 safetensors file with the exact 178
+production tensors: 170 `encoder.*` and eight `scorer.*`. The output is
+1,581,259,300 bytes with SHA-256
+`3cadf5c5f001e859489da2cb035aa015b5b74b8d28a384abedb9d86290419e06`.
+The source and output hashes are recorded in
+`testdata/option_marker_weights_manifest_v1.json`; the companion
+`testdata/option_marker_tensor_metadata_v1.json` fixes every tensor's name,
+shape, dtype, offsets, byte count, and payload hash. These small fixtures are
+committed, but neither source nor converted weight payload is.
+
+The Swift validation layers are deliberately separate:
+
+1. `SafetensorsFile` checks the float32 header and complete gap-free payload
+   layout and exposes zero-copy tensor views over a read-only private mmap.
+2. `VonWeights` checks exact names and shapes (and defensively confirms float32),
+   then exposes typed encoder/scorer groups.
+3. `VonWeights.verifiedProduction(contentsOf:)` first checks the pinned file
+   size and whole-file SHA-256, then parses and schema-checks the same mapping.
+
+The mmap is tied to the opened inode rather than later pathname contents. The
+caller must not mutate or truncate that inode while the `SafetensorsFile` or any
+retained tensor view is alive.
+
+```bash
+# Normal conversion; validates against the canonical fixtures
+.venv/bin/python tools/convert_option_marker.py
+
+# Read-only verification of an existing local output
+.venv/bin/python tools/convert_option_marker.py --check
+
+# Intentional canonical fixture regeneration only
+.venv/bin/python tools/convert_option_marker.py --update-fixtures
+
+# Optional production mmap/hash/schema/payload-hash Swift integration test
+VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
+```
+
+The default Swift suite is offline and skips the production-artifact integration
+test when `VON_PRODUCTION_WEIGHTS_PATH` is unset.
+
 Tokenizer special-token ids are CLS = 50281, SEP = 50282, PAD = 50283,
 and MASK = 50284. Its `bos_token` and `eos_token` are both `None`; only the
 model config aliases `bos_token_id` to 50281 and `eos_token_id` to 50282.
@@ -213,9 +256,10 @@ relative `1e-6`; structure, order, scalar types, and non-floats remain exact.
    up to 129 positions for an interior token. The module's separate value 65 is
    a FlashAttention adapter detail, not the effective CPU radius. RoPE still
    uses absolute sequence positions.
-3. **Weight provenance**: convert the production `option_marker.pt` encoder and
-   scorer tensors deterministically to safetensors before Swift loading; do not
-   substitute the released base-model safetensors.
+3. **Weight provenance**: use the deterministic Phase 3 safetensors conversion
+   of production `option_marker.pt`; do not substitute the released base-model
+   safetensors. Use `verifiedProduction(contentsOf:)` when byte-for-byte pinned
+   artifact identity, rather than schema compatibility alone, is required.
 4. **Null-state debiasing** is easy to miss; it materially changes Noul outputs
    only when neither explicit criterion description is truthy.
 5. float32 everywhere first; consider fp16/bf16 later for speed, but parity

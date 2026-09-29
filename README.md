@@ -29,10 +29,18 @@ Python von package as a reference oracle (golden test vectors).
 
 ## Status
 
-Phases 0–2 are done. The pinned CPU float32 Python oracle fixture is at
-`testdata/von_golden_v1.json`; the Swift tokenizer matches all five golden
-forwards exactly, including the 541-token Unicode input. Phase 3 (deterministic
-weight conversion and loading) is next.
+Phases 0–3 are done; Phase 4 (the ModernBERT backbone in MLX Swift) is next.
+The pinned CPU float32 Python oracle fixture is at `testdata/von_golden_v1.json`,
+and the Swift tokenizer matches all five golden forwards exactly, including the
+541-token Unicode input.
+
+Phase 3 deterministically converts the pinned `option_marker.pt` into one
+1,581,259,300-byte safetensors artifact containing the exact 178 production
+float32 tensors (170 encoder + 8 scorer). The source and output SHA-256 values
+are recorded in `testdata/option_marker_weights_manifest_v1.json`; canonical
+per-tensor metadata and payload hashes are in
+`testdata/option_marker_tensor_metadata_v1.json`. Weight payloads are not
+committed.
 
 The exact Apache-2.0 `wfzyx/von` tokenizer files are checked in as Swift test
 resources with revision and SHA-256 provenance in
@@ -40,20 +48,29 @@ resources with revision and SHA-256 provenance in
 loads only an explicitly supplied local folder and has no model-name/network
 API.
 
-Build and verify with:
+Resolve dependencies, build, and run the default checks with:
 
 ```bash
 swift package resolve
 swift build
 swift test
 .venv/bin/python tools/golden_capture.py --check
-python3 -m unittest discover -s Tests -p 'test_*.py'
+.venv/bin/python -m unittest discover -s Tests -p 'test_*.py'
 ```
 
-Golden generation validates the pinned von source revision, local Hugging Face
-model revision, exact oracle dependency versions, and all six consumed artifact
-hashes before loading one production backend and model. `--check` does not
-rewrite the fixture.
+Create and verify the local production artifact separately:
+
+```bash
+.venv/bin/python tools/convert_option_marker.py
+.venv/bin/python tools/convert_option_marker.py --check
+VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
+```
+
+Use `.venv/bin/python tools/convert_option_marker.py --update-fixtures` only
+when intentionally regenerating the canonical conversion fixtures. The default
+Swift tests use checked-in resources and require no model cache or network; the
+environment variable opts into the mmap, production hash, schema, and
+per-tensor payload-hash integration test.
 
 ## License
 
