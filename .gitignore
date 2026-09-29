@@ -7,6 +7,7 @@ __pycache__/
 
 *.o
 # Model weights are never committed (multi-GB)
+*.pt
 *.safetensors
 *.bin
 weights/
