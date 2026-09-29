@@ -16,8 +16,8 @@ Python von package as a reference oracle (golden test vectors).
   public API, HTTP server
 - **swift-transformers** `Tokenizers` 1.1.6 provides the pinned byte-level BPE
   engine behind VonSwift's local-only tokenizer wrapper
-- **MLX Swift** (`ml-explore/mlx-swift`) owns the tensor math: ModernBERT
-  backbone on Apple Silicon GPU
+- **MLX Swift** (`ml-explore/mlx-swift`) 0.31.4 owns the tensor math:
+  ModernBERT backbone on Apple Silicon CPU/GPU
 - **Python von** (repo-local `.venv`) is the reference oracle generating
   golden test vectors at every step
 
@@ -29,10 +29,12 @@ Python von package as a reference oracle (golden test vectors).
 
 ## Status
 
-Phases 0–3 are done; Phase 4 (the ModernBERT backbone in MLX Swift) is next.
-The pinned CPU float32 Python oracle fixture is at `testdata/von_golden_v1.json`,
-and the Swift tokenizer matches all five golden forwards exactly, including the
-541-token Unicode input.
+Phases 0–4 are done; Phase 5 (the decision head and calibration) is next.
+The pinned CPU float32 Python oracle fixture is at `testdata/von_golden_v1.json`.
+The Swift tokenizer matches all five golden forwards exactly, including the
+541-token Unicode input, and the MLX ModernBERT backbone matches every one of
+the 30 probe boundaries plus all complete final mask vectors. Measured global
+max absolute error is `1.8692017e-4` on CPU and `1.66893e-4` on GPU.
 
 Phase 3 deterministically converts the pinned `option_marker.pt` into one
 1,581,259,300-byte safetensors artifact containing the exact 178 production
@@ -64,6 +66,19 @@ Create and verify the local production artifact separately:
 .venv/bin/python tools/convert_option_marker.py
 .venv/bin/python tools/convert_option_marker.py --check
 VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
+```
+
+For CPU/GPU backbone parity, use Xcode's Metal-enabled test bundle (the plain
+SwiftPM test bundle lacks the Metal library):
+
+```bash
+xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/xcode"
+VON_MODERNBERT_PARITY=1 VON_MODERNBERT_DEVICE=gpu \
+  VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
+  xcrun xctest -XCTest VonSwiftTests.VonModernBERTTests/testProductionBackboneParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+# Use VON_MODERNBERT_DEVICE=cpu to check CPU parity.
 ```
 
 Use `.venv/bin/python tools/convert_option_marker.py --update-fixtures` only

@@ -100,23 +100,24 @@ VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
 Default Swift tests remain offline; the environment variable opts into the
 production artifact hash, schema, and per-tensor payload-hash integration test.
 
-### Phase 4 — ModernBERT backbone in MLX Swift ⬅️ NEXT
-- [ ] Embeddings: token embeddings → bias-free LayerNorm → dropout; no learned
+### Phase 4 — ModernBERT backbone in MLX Swift ✅ DONE
+- [x] Embeddings: token embeddings → bias-free LayerNorm → dropout; no learned
       absolute position embeddings
-- [ ] Attention: RoPE over absolute positions (θ=160000 full / 10000 sliding),
+- [x] Attention: RoPE over absolute positions (θ=160000 full / 10000 sliding),
       inclusive local radius 64 (up to 129 tokens), full attention every 3rd
       layer, 16 heads, no bias
-- [ ] Gated MLP: bias-free Wi(1024→5248), split 2624/2624,
+- [x] Gated MLP: bias-free Wi(1024→5248), split 2624/2624,
       GELU(input)×gate, then bias-free Wo(2624→1024)
-- [ ] Layer parity vs backbone goldens (tolerance target: < 1e-3 on mask-position
-      hidden states)
-- [ ] End-to-end logits within tolerance of head goldens
+- [x] All five golden forwards match at all 30 mask-position probe boundaries
+      and across every complete final K×1024 vector below the `< 1e-3` target
+      (CPU global max `1.8692017e-4`; GPU global max `1.66893e-4`)
 
-### Phase 5 — Decision head + calibration
+### Phase 5 — Decision head + calibration ⬅️ NEXT
 - [ ] Load the eight converted `scorer.*` tensors from the Phase 3 safetensors
       artifact (the released `model.safetensors` contains none of them)
 - [ ] `OptionMarkerScorer`: affine LayerNorm(1024) → biased Linear(1024→512) →
       exact GELU → affine LayerNorm(512) → biased Linear(512→1)
+- [ ] End-to-end raw logits within tolerance of all five head goldens
 - [ ] Input-conditioned temperature: T = bias + entropy·H_norm +
       log_tokens·log10(n)/4 + n_options·K/8, clamped [0.3, 12.0]
 - [ ] Choice: softmax(logits/T), argmax on raw logits, confidence = p₁ − p₂

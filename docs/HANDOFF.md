@@ -24,8 +24,8 @@ Read these first, in order:
 | 1 — Golden test vector capture | ✅ done |
 | 2 — Tokenizer in Swift | ✅ done |
 | 3 — Weight conversion and loading (safetensors) | ✅ done |
-| 4 — ModernBERT backbone (MLX Swift) | ⬅️ **next** |
-| 5 — Decision head + calibration | ⬜ |
+| 4 — ModernBERT backbone (MLX Swift) | ✅ done |
+| 5 — Decision head + calibration | ⬅️ **next** |
 | 6 — Public API | ⬜ |
 | 7 — HTTP server `/v1/systemone` | ⬜ |
 | 8 — Performance | ⬜ |
@@ -105,6 +105,31 @@ additionally checks the pinned whole-file size and SHA-256 before parsing the
 same mapping. The mapped
 inode must not be mutated or truncated while the file or any view is alive.
 
+## Phase 4 ModernBERT backbone
+
+`VonModernBERT` is the exact 28-layer production encoder implemented with
+`mlx-swift` 0.31.4 (`MLX` + `MLXNN`, macOS 14 minimum). Initialization copies
+all float32 encoder tensors out of the Phase 3 mmap into MLX-owned arrays. The
+forward path implements the layer-zero norm exception, `[B,L,3,16,64]` QKV
+layout, nontraditional full-head RoPE at the two production bases, full
+attention every third layer, inclusive radius-64 sliding attention with
+key-only additive padding masks, 0.125-scaled SDPA, gated exact-GELU MLPs, and
+the final norm.
+
+The parity test is enabled with `VON_MODERNBERT_PARITY=1` plus
+`VON_PRODUCTION_WEIGHTS_PATH`; it uses `VonWeights.verifiedProduction`, covers
+all five golden forwards and all 30 boundaries, and checks complete final
+K×1024 mask vectors. Measured global max absolute errors are `1.8692017e-4` on MLX CPU and
+`1.66893e-4` on MLX GPU, both below the fixed `< 1e-3` target.
+
+MLX Swift's command-line SwiftPM build does not package Metal shaders. Default
+offline tests remain pure Swift and pass with `swift test`; runtime CPU/GPU
+parity was run from the Xcode-built test bundle after `xcodebuild` produced
+`default.metallib`. The shell parity variables are not propagated by the
+auto-generated Xcode package scheme, so the built bundle was invoked directly
+with `xcrun xctest`. The full Xcode suite also passes after using
+`Bundle.module.resourceURL` for tokenizer test resources.
+
 ## Build & test
 
 Resolve dependencies, then run the default checks:
@@ -126,6 +151,18 @@ Swift test with:
 VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
 ```
 
+Run the numeric backbone parity on the Xcode-built test bundle (set device to
+`cpu` for the CPU oracle comparison):
+
+```bash
+xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/xcode"
+VON_MODERNBERT_PARITY=1 VON_MODERNBERT_DEVICE=gpu \
+  VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
+  xcrun xctest -XCTest VonSwiftTests.VonModernBERTTests/testProductionBackboneParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+```
+
 The default Swift tests use checked-in resources and require no model cache or
 network. Run `.venv/bin/python tools/convert_option_marker.py --update-fixtures`
 only when intentionally replacing the canonical metadata/manifest fixtures. Both
@@ -143,8 +180,8 @@ relative `1e-6`; structure, order, types, and non-floats remain exact.
 
 ## Open questions / risks
 
-- ModernBERT has no learned absolute position embedding; RoPE uses absolute
-  sequence positions. The CPU oracle's sliding mask has inclusive radius 64
-  (up to 129 positions) for `local_attention=128`; the module's separate 65 is
-  only a FlashAttention adapter detail.
-- float32 parity first; performance precision changes later.
+- `mlx-swift` runtime testing requires an Xcode-produced Metal library even for
+  an explicitly selected CPU device; plain `swift test` cannot run opt-in model
+  parity directly with the upstream 0.31.4 package layout.
+- Phase 4 is float32-only. Precision/performance changes must retain the golden
+  parity path.
