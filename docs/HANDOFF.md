@@ -25,8 +25,8 @@ Read these first, in order:
 | 2 — Tokenizer in Swift | ✅ done |
 | 3 — Weight conversion and loading (safetensors) | ✅ done |
 | 4 — ModernBERT backbone (MLX Swift) | ✅ done |
-| 5 — Decision head + calibration | ⬅️ **next** |
-| 6 — Public API | ⬜ |
+| 5 — Decision head + calibration | ✅ done |
+| 6 — Public API | ⬅️ **next** |
 | 7 — HTTP server `/v1/systemone` | ⬜ |
 | 8 — Performance | ⬜ |
 
@@ -130,6 +130,32 @@ auto-generated Xcode package scheme, so the built bundle was invoked directly
 with `xcrun xctest`. The full Xcode suite also passes after using
 `Bundle.module.resourceURL` for tokenizer test resources.
 
+## Phase 5 decision head and calibration
+
+`VonOptionMarkerScorer` copies all eight validated scorer tensors into
+MLX-owned float32 arrays and implements affine LayerNorm(ε=1e-5), biased dense
+1024→512, exact GELU, affine LayerNorm(512), and biased 512→1 projection.
+Training dropout is intentionally absent. `VonOptionMarkerModel` composes the
+scorer with `VonModernBERT` and gathers final hidden states at validated mask
+token positions.
+
+`VonDecisionMath` is the request-independent Choice/Noul/Score math layer. It
+embeds the pinned `marker_calibration.json` coefficients with provenance,
+reproduces Torch float32 softmax and entropy reduction before applying the map
+in double precision, uses float32 0.7 default-Noul debiasing, first-maximum tie
+selection, and nearest-even output rounding. Phase 6 request types and state
+formatting are intentionally not present yet.
+
+All five isolated scorer goldens, composed raw logits, all four calibrated
+probability vectors, and guarded exact rounded answers pass on both devices.
+Measured global max absolute errors were:
+
+| Path | MLX CPU | MLX GPU |
+|---|---:|---:|
+| Isolated scorer logits | `9.536743e-7` | `2.861023e-6` |
+| Composed backbone + scorer logits | `6.1035156e-5` | `5.9604645e-5` |
+| Four decision probability vectors | `4.991889e-6` | `4.068017e-6` |
+
 ## Build & test
 
 Resolve dependencies, then run the default checks:
@@ -151,7 +177,21 @@ Swift test with:
 VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
 ```
 
-Run the numeric backbone parity on the Xcode-built test bundle (set device to
+Run numeric parity on the Xcode-built test bundle. The Phase 5 command covers
+the isolated scorer, composed raw logits, calibrated probabilities, and rounded
+answers; run it once with each device:
+
+```bash
+xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/xcode"
+VON_OPTION_MARKER_PARITY=1 VON_OPTION_MARKER_DEVICE=cpu \
+  VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
+  xcrun xctest -XCTest VonSwiftTests.VonOptionMarkerModelTests/testProductionScorerAndComposedParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+# Repeat with VON_OPTION_MARKER_DEVICE=gpu.
+```
+
+The Phase 4 backbone-only parity command remains available (set device to
 `cpu` for the CPU oracle comparison):
 
 ```bash
@@ -183,5 +223,8 @@ relative `1e-6`; structure, order, types, and non-floats remain exact.
 - `mlx-swift` runtime testing requires an Xcode-produced Metal library even for
   an explicitly selected CPU device; plain `swift test` cannot run opt-in model
   parity directly with the upstream 0.31.4 package layout.
-- Phase 4 is float32-only. Precision/performance changes must retain the golden
-  parity path.
+- The model and decision parity paths are float32-first. Precision/performance
+  changes must retain the golden path and its mixed float32/double calibration
+  boundary.
+- Phase 6 must wrap these low-level results without duplicating calibration,
+  rounding, default-Noul debiasing, or state token counting.

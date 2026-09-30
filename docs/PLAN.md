@@ -112,20 +112,23 @@ production artifact hash, schema, and per-tensor payload-hash integration test.
       and across every complete final K×1024 vector below the `< 1e-3` target
       (CPU global max `1.8692017e-4`; GPU global max `1.66893e-4`)
 
-### Phase 5 — Decision head + calibration ⬅️ NEXT
-- [ ] Load the eight converted `scorer.*` tensors from the Phase 3 safetensors
-      artifact (the released `model.safetensors` contains none of them)
-- [ ] `OptionMarkerScorer`: affine LayerNorm(1024) → biased Linear(1024→512) →
-      exact GELU → affine LayerNorm(512) → biased Linear(512→1)
-- [ ] End-to-end raw logits within tolerance of all five head goldens
-- [ ] Input-conditioned temperature: T = bias + entropy·H_norm +
-      log_tokens·log10(n)/4 + n_options·K/8, clamped [0.3, 12.0]
-- [ ] Choice: softmax(logits/T), argmax on raw logits, confidence = p₁ − p₂
-- [ ] Noul: 2 options + null-state debiasing (subtract 0.7·bias from true logit
-      when criteria not explicit)
-- [ ] Score: expected value Σ i·pᵢ
+### Phase 5 — Decision head + calibration ✅ DONE
+- [x] Load and copy the eight converted float32 `scorer.*` tensors from the
+      Phase 3 artifact (the released `model.safetensors` contains none of them)
+- [x] `OptionMarkerScorer`: affine LayerNorm(1024) → biased Linear(1024→512) →
+      exact GELU → affine LayerNorm(512) → biased Linear(512→1), with inference
+      dropout omitted
+- [x] Gather final backbone states at marker positions and match all five raw
+      logit goldens on MLX CPU/GPU below `< 1e-3`
+- [x] Input-conditioned temperature: T = bias + entropy·H_norm +
+      log_tokens·log10(n)/4 + n_options·K/8, clamped [0.3, 12.0], preserving
+      Torch's float32 softmax/entropy reduction before double map coefficients
+- [x] Choice: softmax(logits/T), first-max argmax on raw logits, confidence = p₁ − p₂
+- [x] Noul: 2 options + float32 null-state debiasing (subtract 0.7·bias from
+      true logit when criteria are not explicit)
+- [x] Score: expected value Σ i·pᵢ with nearest-even production rounding
 
-### Phase 6 — Public API
+### Phase 6 — Public API ⬅️ NEXT
 - [ ] `decide`, `judge`, `rate`, `systemOne` mirroring von's Python API
 - [ ] State formatting: dict → `"key: value"` lines
 - [ ] Question types: Choice / Noul / Score structs

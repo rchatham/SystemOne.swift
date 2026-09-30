@@ -246,6 +246,40 @@ pydantic-core 2.46.5, and safetensors 0.8.0. `--check` compares canonical bytes
 first, then permits only finite float-leaf drift within absolute `1e-5` /
 relative `1e-6`; structure, order, scalar types, and non-floats remain exact.
 
+## Phase 5 Swift decision implementation
+
+`VonOptionMarkerScorer` copies the eight validated `scorer.*` tensors into
+MLX-owned float32 arrays. Its inference graph is exactly affine
+LayerNorm(1024, ε=1e-5) → biased Linear(1024→512) → exact GELU → affine
+LayerNorm(512, ε=1e-5) → biased Linear(512→1); the Python module's dropout is
+training-only and is not represented in inference. `VonOptionMarkerModel`
+composes this head with `VonModernBERT`, validates marker indices and token ids,
+and gathers `[MASK]` states before scoring.
+
+`VonDecisionMath` owns only request-independent numerical behavior; Phase 6
+will supply request structs and state formatting. Calibration intentionally has
+a mixed-precision boundary matching Python/Torch:
+
+1. Stable softmax, `p * log(clamp_min(p, 1e-12))`, and entropy summation run in
+   float32.
+2. The resulting float32 entropy scalar is promoted to double; entropy
+   normalization, `log10` token feature, JSON coefficients, feature sum, and
+   temperature clamp run in double precision.
+3. Dividing logits by temperature and the calibrated softmax return to
+   float32. Default-Noul's `0.7 * null_bias` adjustment is also float32.
+4. Choice ties retain the first raw-logit maximum. Serialized decision values
+   use nearest-even rounding after float32 probabilities are promoted to
+   double.
+
+The embedded map values come from pinned `marker_calibration.json` SHA-256
+`c3b5345c89be9ee802a5587dcda4e530e69a9bb5965dd839b877b7e8cfff048f`.
+CPU/GPU Xcode-bundle parity covers five isolated scorer forwards, five composed
+raw-logit forwards, four calibrated probability vectors, and exact rounded
+answers guarded by each value's distance from a rounding boundary. Global max
+absolute errors are `9.536743e-7` / `2.861023e-6` (isolated scorer CPU/GPU),
+`6.1035156e-5` / `5.9604645e-5` (composed logits), and `4.991889e-6` /
+`4.068017e-6` (decision probabilities).
+
 ## Porting notes / risk areas
 
 1. **Tokenizer parity** is the highest-risk item — byte-level BPE with

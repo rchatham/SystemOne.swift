@@ -29,12 +29,21 @@ Python von package as a reference oracle (golden test vectors).
 
 ## Status
 
-Phases 0–4 are done; Phase 5 (the decision head and calibration) is next.
-The pinned CPU float32 Python oracle fixture is at `testdata/von_golden_v1.json`.
-The Swift tokenizer matches all five golden forwards exactly, including the
-541-token Unicode input, and the MLX ModernBERT backbone matches every one of
-the 30 probe boundaries plus all complete final mask vectors. Measured global
-max absolute error is `1.8692017e-4` on CPU and `1.66893e-4` on GPU.
+Phases 0–5 are done; Phase 6 (the public API) is next. The pinned CPU float32
+Python oracle fixture is at `testdata/von_golden_v1.json`. The Swift tokenizer
+matches all five golden forwards exactly, including the 541-token Unicode
+input, and the MLX ModernBERT backbone matches every one of the 30 probe
+boundaries plus all complete final mask vectors. Measured backbone global max
+absolute error is `1.8692017e-4` on CPU and `1.66893e-4` on GPU.
+
+The scorer copies the eight production float32 tensors and implements both
+affine norms, biased projections, exact GELU, and no inference dropout.
+Composed raw-logit global max error is `6.1035156e-5` on CPU and
+`5.9604645e-5` on GPU. Pure Swift decision math preserves Torch float32
+softmax/entropy and default-Noul debiasing, then applies the pinned calibration
+map in double precision; all four probability vectors match within
+`4.991889e-6` on CPU and `4.068017e-6` on GPU, with exact guarded rounded
+answers.
 
 Phase 3 deterministically converts the pinned `option_marker.pt` into one
 1,581,259,300-byte safetensors artifact containing the exact 178 production
@@ -68,17 +77,18 @@ Create and verify the local production artifact separately:
 VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
 ```
 
-For CPU/GPU backbone parity, use Xcode's Metal-enabled test bundle (the plain
-SwiftPM test bundle lacks the Metal library):
+For CPU/GPU scorer, composed-model, and decision parity, use Xcode's
+Metal-enabled test bundle (the plain SwiftPM test bundle lacks the Metal
+library):
 
 ```bash
 xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
-VON_MODERNBERT_PARITY=1 VON_MODERNBERT_DEVICE=gpu \
+VON_OPTION_MARKER_PARITY=1 VON_OPTION_MARKER_DEVICE=cpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
-  xcrun xctest -XCTest VonSwiftTests.VonModernBERTTests/testProductionBackboneParityWhenConfigured \
+  xcrun xctest -XCTest VonSwiftTests.VonOptionMarkerModelTests/testProductionScorerAndComposedParityWhenConfigured \
   "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
-# Use VON_MODERNBERT_DEVICE=cpu to check CPU parity.
+# Repeat with VON_OPTION_MARKER_DEVICE=gpu.
 ```
 
 Use `.venv/bin/python tools/convert_option_marker.py --update-fixtures` only
