@@ -108,13 +108,13 @@ public struct VonTokenizer: Sendable {
     ) -> String {
         let prefix: String
         if question.isEmpty {
-            prefix = pythonStrip(state)
+            prefix = VonPythonSemantics.pythonStrip(state)
         } else {
-            prefix = pythonStrip("\(question) \(state)")
+            prefix = VonPythonSemantics.pythonStrip("\(question) \(state)")
         }
 
         let packedOptions = options
-            .map { "[MASK] \(pythonStrip($0))" }
+            .map { "[MASK] \(VonPythonSemantics.pythonStrip($0))" }
             .joined(separator: " ")
         return "\(prefix) [SEP] \(packedOptions)"
     }
@@ -136,38 +136,4 @@ public struct VonTokenizer: Sendable {
         )
     }
 
-    /// Matches CPython 3.12 `str.strip()` whitespace behavior.
-    private static func pythonStrip(_ text: String) -> String {
-        let scalars = text.unicodeScalars
-        var lowerBound = scalars.startIndex
-        var upperBound = scalars.endIndex
-
-        while lowerBound < upperBound, isPythonWhitespace(scalars[lowerBound]) {
-            scalars.formIndex(after: &lowerBound)
-        }
-        while lowerBound < upperBound {
-            let previous = scalars.index(before: upperBound)
-            guard isPythonWhitespace(scalars[previous]) else { break }
-            upperBound = previous
-        }
-        return String(scalars[lowerBound..<upperBound])
-    }
-
-    private static func isPythonWhitespace(_ scalar: Unicode.Scalar) -> Bool {
-        switch scalar.value {
-        case 0x0009...0x000D,
-             0x001C...0x0020,
-             0x0085,
-             0x00A0,
-             0x1680,
-             0x2000...0x200A,
-             0x2028...0x2029,
-             0x202F,
-             0x205F,
-             0x3000:
-            return true
-        default:
-            return false
-        }
-    }
 }
