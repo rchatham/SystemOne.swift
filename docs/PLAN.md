@@ -128,10 +128,12 @@ production artifact hash, schema, and per-tensor payload-hash integration test.
       true logit when criteria are not explicit)
 - [x] Score: expected value Σ i·pᵢ with nearest-even production rounding
 
-### Phase 6 — Public API ⬅️ NEXT
-- [ ] `decide`, `judge`, `rate`, `systemOne` mirroring von's Python API
-- [ ] State formatting: dict → `"key: value"` lines
-- [ ] Question types: Choice / Noul / Score structs
+### Phase 6 — Public API ✅ DONE
+- [x] Public local-only `VonEngine` actor with async verified tokenizer/weight initialization
+- [x] Sequential `decide`, `judge`, `rate`, and `systemOne` over ordered state fields, options, and questions
+- [x] Codable + Sendable Choice / Noul / Score requests and typed Python-keyed answers
+- [x] Exact Python rendering/truthiness, including partial Noul criteria and Choice fallback edge cases
+- [x] Offline injected-logit four-case/five-forward goldens and Xcode CPU/GPU public-API parity
 
 ### Phase 7 — HTTP server, `/v1/systemone` parity
 - [ ] SwiftNIO or similar minimal HTTP server

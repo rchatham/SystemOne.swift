@@ -26,8 +26,8 @@ Read these first, in order:
 | 3 — Weight conversion and loading (safetensors) | ✅ done |
 | 4 — ModernBERT backbone (MLX Swift) | ✅ done |
 | 5 — Decision head + calibration | ✅ done |
-| 6 — Public API | ⬅️ **next** |
-| 7 — HTTP server `/v1/systemone` | ⬜ |
+| 6 — Public API | ✅ done |
+| 7 — HTTP server `/v1/systemone` | ⬅️ **next** |
 | 8 — Performance | ⬜ |
 
 ## Environment facts
@@ -156,6 +156,40 @@ Measured global max absolute errors were:
 | Composed backbone + scorer logits | `6.1035156e-5` | `5.9604645e-5` |
 | Four decision probability vectors | `4.991889e-6` | `4.068017e-6` |
 
+## Phase 6 public API
+
+`VonEngine` is a public actor that loads a tokenizer only from an explicit
+local folder and weights only through `VonWeights.verifiedProduction`. It owns
+all MLX state, evaluates lazy output inside actor isolation, and converts to raw
+`[Float]` only after `eval`. `decide`, `judge`, `rate`, and `systemOne` evaluate
+ordered question entries sequentially; batching remains Phase 8 and HTTP remains
+Phase 7.
+
+Public request/response models are `Codable & Sendable`. Inference-facing state
+fields, Choice options, questions, answers, probabilities, and legends use
+ordered entry arrays rather than dictionaries. Codable request and response
+objects keep Python's keyed object forms, plus `state_order`, `question_order`,
+`criteria_order`, `answer_order`, `probability_order`, and `legend_order`
+metadata so decoding never relies on keyed-container order; Python's Pydantic
+models ignore those extra fields. Encoding rejects duplicate keyed entries
+before creating their keyed containers, so ordered arrays cannot silently
+collapse values. The engine reports `von-1.1.0` and Python-compatible
+approximate usage.
+
+Rendering preserves Python behavior: Choice falls back to a stripped key only
+for `nil`/empty descriptions (whitespace-only is truthy, then strips empty);
+either non-empty Noul side disables null debiasing, while each missing or empty
+side independently receives its default; Score supports text and `what` plus
+`examples`. Swift intentionally rejects empty Choice/Score inputs, duplicate
+state or Choice keys, and duplicate question IDs instead of producing ambiguous
+or synthetic results. Packed input must contain exactly one tokenizer mask per
+rendered option; a user-supplied literal `[MASK]` rejects that affected packed
+input before it is passed to the injected provider or production model.
+
+Offline tests inject ordered logits and reproduce the fixture's four cases and
+five packed forwards exactly. The public production API also passed exact
+rounded golden outputs through the Xcode-built bundle on both MLX CPU and GPU.
+
 ## Build & test
 
 Resolve dependencies, then run the default checks:
@@ -189,6 +223,16 @@ VON_OPTION_MARKER_PARITY=1 VON_OPTION_MARKER_DEVICE=cpu \
   xcrun xctest -XCTest VonSwiftTests.VonOptionMarkerModelTests/testProductionScorerAndComposedParityWhenConfigured \
   "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
 # Repeat with VON_OPTION_MARKER_DEVICE=gpu.
+```
+
+Run public API parity once per device:
+
+```bash
+VON_PUBLIC_API_PARITY=1 VON_PUBLIC_API_DEVICE=cpu \
+  VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
+  xcrun xctest -XCTest VonSwiftTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+# Repeat with VON_PUBLIC_API_DEVICE=gpu.
 ```
 
 The Phase 4 backbone-only parity command remains available (set device to
@@ -226,5 +270,7 @@ relative `1e-6`; structure, order, types, and non-floats remain exact.
 - The model and decision parity paths are float32-first. Precision/performance
   changes must retain the golden path and its mixed float32/double calibration
   boundary.
-- Phase 6 must wrap these low-level results without duplicating calibration,
-  rounding, default-Noul debiasing, or state token counting.
+- Phase 6 Codable is a typed Swift interchange contract, not a raw Python HTTP
+  wire decoder. Preserving insertion order in metadata-free JSON and reproducing
+  Python/Pydantic raw untyped omission, default, and coercion behavior are
+  explicit Phase 7 blockers and are intentionally deferred to its HTTP adapter.

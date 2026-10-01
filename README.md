@@ -29,7 +29,9 @@ Python von package as a reference oracle (golden test vectors).
 
 ## Status
 
-Phases 0–5 are done; Phase 6 (the public API) is next. The pinned CPU float32
+Phases 0–6 are done; Phase 7 (the HTTP server) is next. The public API is a
+local-only `VonEngine` actor with ordered, typed `Codable & Sendable` state,
+question, and answer models. The pinned CPU float32
 Python oracle fixture is at `testdata/von_golden_v1.json`. The Swift tokenizer
 matches all five golden forwards exactly, including the 541-token Unicode
 input, and the MLX ModernBERT backbone matches every one of the 30 probe
@@ -59,6 +61,41 @@ resources with revision and SHA-256 provenance in
 loads only an explicitly supplied local folder and has no model-name/network
 API.
 
+## Public API
+
+```swift
+let engine = try await VonEngine(
+    tokenizerFolder: tokenizerFolder,
+    verifiedWeightsURL: weightsURL
+)
+
+let answer = try await engine.decide(
+    state: .fields([
+        VonStateField(key: "status", value: "degraded"),
+        VonStateField(key: "region", value: "Tokyo"),
+    ]),
+    choices: [
+        ChoiceOption(key: "infrastructure", description: "Server or region failure"),
+        ChoiceOption(key: "billing", description: "Payment or invoice issue"),
+    ]
+)
+```
+
+`systemOne` accepts ordered `[QuestionEntry]`; inference is sequential in Phase
+6 and does not batch questions. Choice options and key/value state are also
+ordered arrays so model semantics never depend on `Dictionary` iteration.
+Codable values retain Python's keyed objects and add explicit order metadata
+(`state_order`, `question_order`, `criteria_order`, `answer_order`,
+`probability_order`, and `legend_order`) where needed; Python Pydantic ignores
+these extra fields, while Swift decoding uses them to preserve order.
+
+Python-compatible edge behavior is intentional: either non-empty Noul side
+(including whitespace) disables null debiasing, each absent/empty side receives
+its own default, and a Choice description falls back to its stripped key only
+when it is `nil` or exactly empty. Swift safely rejects zero Choice options,
+zero Score levels, duplicate state/Choice keys, and duplicate question IDs,
+which Python's dictionary API cannot represent consistently.
+
 Resolve dependencies, build, and run the default checks with:
 
 ```bash
@@ -77,9 +114,20 @@ Create and verify the local production artifact separately:
 VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
 ```
 
-For CPU/GPU scorer, composed-model, and decision parity, use Xcode's
-Metal-enabled test bundle (the plain SwiftPM test bundle lacks the Metal
-library):
+For CPU/GPU public-API parity, use Xcode's Metal-enabled test bundle (the plain
+SwiftPM test bundle lacks the Metal library):
+
+```bash
+xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/xcode"
+VON_PUBLIC_API_PARITY=1 VON_PUBLIC_API_DEVICE=cpu \
+  VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
+  xcrun xctest -XCTest VonSwiftTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+# Repeat with VON_PUBLIC_API_DEVICE=gpu.
+```
+
+For lower-level CPU/GPU scorer, composed-model, and decision parity:
 
 ```bash
 xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \

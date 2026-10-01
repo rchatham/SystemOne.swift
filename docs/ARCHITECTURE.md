@@ -280,6 +280,47 @@ absolute errors are `9.536743e-7` / `2.861023e-6` (isolated scorer CPU/GPU),
 `6.1035156e-5` / `5.9604645e-5` (composed logits), and `4.991889e-6` /
 `4.068017e-6` (decision probabilities).
 
+## Phase 6 public Swift API
+
+`VonEngine` is an actor and the only high-level production owner of the
+`VonTokenizer` and `VonOptionMarkerModel`. Its async initializer accepts an
+explicit tokenizer folder and a verified production safetensors URL; no model
+name resolution, network fallback, HTTP, or question batching exists. Each
+packed input is run and `eval`uated under actor isolation before logits are
+materialized as `[Float]` and passed to `VonDecisionMath`.
+
+The public `Choice`, `Noul`, `Score`, `Question`, answer, request, response, and
+usage models are typed `Codable & Sendable` values. All inference-significant
+collections are ordered arrays: `VonStateField`, `ChoiceOption`, and
+`QuestionEntry`. Codable request and response output retains Python's keyed
+object shapes and adds explicit order metadata (`state_order`, `question_order`,
+`criteria_order`, `answer_order`, `probability_order`, and `legend_order`);
+decoding validates exact key coverage and reconstructs arrays from those fields
+instead of relying on `KeyedDecodingContainer.allKeys` order. The extra fields
+are ignored by Python's Pydantic defaults. Phase 7 still needs an
+order-preserving parser for raw Python requests and responses that lack this
+metadata.
+
+Primitive rendering is shared with tokenizer packing and exactly preserves the
+pinned backend's edge semantics:
+
+- Choice uses the stripped key only when a description is `nil` or exactly
+  empty. Whitespace-only descriptions are truthy first and then strip to empty.
+- Noul computes explicitness before stripping. Either non-empty recognized side
+  (including whitespace) disables null debiasing; each missing/empty side gets
+  its own default independently.
+- Score accepts ordered strings or `what`/`examples` values and renders examples
+  with the exact `" Examples: "` and `", "` separators.
+- Usage counts Python Unicode code points and applies the backend's approximate
+  character-count formula rather than tokenizer counts.
+
+Swift intentionally rejects empty Choice options, empty Score levels, duplicate
+state/Choice keys, and duplicate question IDs. Python can return synthetic
+empty answers and cannot express most duplicates through dictionaries; Swift
+chooses safe, unambiguous inputs instead. Offline injected-logit tests reproduce
+all four fixture answers and five packed forwards, and the public API exact
+rounded outputs pass through the production model on Xcode MLX CPU and GPU.
+
 ## Porting notes / risk areas
 
 1. **Tokenizer parity** is the highest-risk item — byte-level BPE with
