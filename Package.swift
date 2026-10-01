@@ -6,6 +6,9 @@ let package = Package(
     platforms: [
         .macOS(.v14),
     ],
+    products: [
+        .library(name: "VonHTTP", targets: ["VonHTTP"]),
+    ],
     dependencies: [
         .package(
             url: "https://github.com/huggingface/swift-transformers",
@@ -14,6 +17,10 @@ let package = Package(
         .package(
             url: "https://github.com/ml-explore/mlx-swift",
             exact: "0.31.4"
+        ),
+        .package(
+            url: "https://github.com/apple/swift-nio.git",
+            exact: "2.84.0"
         ),
     ],
     targets: [
@@ -26,9 +33,19 @@ let package = Package(
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        .target(
+            name: "VonHTTP",
+            dependencies: [
+                "VonSwift",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .executableTarget(
             name: "von",
-            dependencies: ["VonSwift"],
+            dependencies: ["VonSwift", "VonHTTP"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
@@ -39,6 +56,17 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/Tokenizer"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "VonHTTPTests",
+            dependencies: [
+                "VonHTTP",
+                "VonSwift",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
