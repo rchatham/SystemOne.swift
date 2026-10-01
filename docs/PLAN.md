@@ -135,10 +135,16 @@ production artifact hash, schema, and per-tensor payload-hash integration test.
 - [x] Exact Python rendering/truthiness, including partial Noul criteria and Choice fallback edge cases
 - [x] Offline injected-logit four-case/five-forward goldens and Xcode CPU/GPU public-API parity
 
-### Phase 7 — HTTP server, `/v1/systemone` parity
-- [ ] SwiftNIO or similar minimal HTTP server
-- [ ] Wire protocol per von's `server.py`
-- [ ] Round-trip tests against Python `von serve`
+### Phase 7 — HTTP server, `/v1/systemone` parity ✅ DONE
+- [x] Security-hardened SwiftNIO HTTP/1.1 server with bounded framing, bodies,
+      connections, inference concurrency, deadlines, and graceful shutdown
+- [x] Order-preserving raw JSON adapter for Python's metadata-free wire format,
+      with GET routes, Bearer auth, and an explicit CORS allowlist
+- [x] Local-only `von serve` CLI requiring explicit port, tokenizer folder, and
+      verified safetensors paths; non-loopback binds fail closed without a key
+- [x] Opt-in live round-trip parity against pinned Python `von serve` for ordered
+      Choice, default/explicit Noul, Score, reordered inputs, GET routes, auth,
+      and error status categories
 
 ### Phase 8 — Performance
 - [ ] Latency benchmark vs Python von on MPS

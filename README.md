@@ -29,9 +29,10 @@ Python von package as a reference oracle (golden test vectors).
 
 ## Status
 
-Phases 0–6 are done; Phase 7 (the HTTP server) is next. The public API is a
-local-only `VonEngine` actor with ordered, typed `Codable & Sendable` state,
-question, and answer models. The pinned CPU float32
+Phases 0–7 are done; Phase 8 (performance and multi-question fan-out) is next.
+The public API is a local-only `VonEngine` actor with ordered, typed
+`Codable & Sendable` state, question, and answer models. Phase 7 adds a
+security-hardened SwiftNIO server and order-preserving raw JSON wire codec. The pinned CPU float32
 Python oracle fixture is at `testdata/von_golden_v1.json`. The Swift tokenizer
 matches all five golden forwards exactly, including the 541-token Unicode
 input, and the MLX ModernBERT backbone matches every one of the 30 probe
@@ -96,6 +97,50 @@ when it is `nil` or exactly empty. Swift safely rejects zero Choice options,
 zero Score levels, duplicate state/Choice keys, and duplicate question IDs,
 which Python's dictionary API cannot represent consistently.
 
+## HTTP server
+
+The CLI only loads explicit local artifacts and requires an explicit port (it
+never defaults to the workspace-assigned port 8000):
+
+```bash
+VON_API_KEY='replace-me' \
+VON_CORS_ORIGINS='https://app.example,https://admin.example' \
+  swift run von serve \
+    --host 127.0.0.1 \
+    --port 8015 \
+    --tokenizer Tests/VonSwiftTests/Resources/Tokenizer \
+    --weights weights/option_marker.safetensors
+```
+
+`VON_API_KEY` enables Bearer authentication for `/v1/systemone` and is required
+for every non-loopback bind. `VON_CORS_ORIGINS` is an optional comma-separated
+explicit allowlist; missing means CORS is disabled and `*` is rejected. SIGINT
+and SIGTERM stop admission and run bounded graceful shutdown.
+
+The HTTP adapter preserves raw JSON order for state fields, questions, Choice
+criteria, answers, probabilities, and legends without relying on Swift
+`Codable` dictionary order or `_order` metadata. Swift deliberately accepts a
+strict, resource-bounded subset where Python permits ambiguous or unbounded
+inputs. Empty Choice/Score criteria and worst-case escaped responses over 1 MiB
+are rejected before inference. `Expect: 100-continue` is acknowledged only
+after auth, size, and admission checks; unsupported expectations receive 417.
+The server also differs from Python's default wildcard CORS policy by disabling
+CORS until an explicit allowlist is configured.
+
+Live parity is opt-in because it loads both production models. The script checks
+that loopback port 8015 is clear (8014 remains assigned), inventories Docker,
+uses a cleanup trap, waits for Python health, starts Swift on `127.0.0.1:0`, and
+runs the Metal-enabled Xcode test bundle:
+
+```bash
+tools/run_http_parity.sh
+```
+
+It compares ordered raw successful JSON for Choice, default and explicit Noul,
+Score, reordered state/criteria/questions, and GET routes; error cases compare
+HTTP status categories, including Bearer auth. Neither weights nor server
+processes are committed or launched by the default test suite.
+
 Resolve dependencies, build, and run the default checks with:
 
 ```bash
@@ -118,7 +163,7 @@ For CPU/GPU public-API parity, use Xcode's Metal-enabled test bundle (the plain
 SwiftPM test bundle lacks the Metal library):
 
 ```bash
-xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \
+xcodebuild build-for-testing -scheme VonSwift-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 VON_PUBLIC_API_PARITY=1 VON_PUBLIC_API_DEVICE=cpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
@@ -130,7 +175,7 @@ VON_PUBLIC_API_PARITY=1 VON_PUBLIC_API_DEVICE=cpu \
 For lower-level CPU/GPU scorer, composed-model, and decision parity:
 
 ```bash
-xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \
+xcodebuild build-for-testing -scheme VonSwift-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 VON_OPTION_MARKER_PARITY=1 VON_OPTION_MARKER_DEVICE=cpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \

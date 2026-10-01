@@ -297,7 +297,7 @@ object shapes and adds explicit order metadata (`state_order`, `question_order`,
 `criteria_order`, `answer_order`, `probability_order`, and `legend_order`);
 decoding validates exact key coverage and reconstructs arrays from those fields
 instead of relying on `KeyedDecodingContainer.allKeys` order. The extra fields
-are ignored by Python's Pydantic defaults. Phase 7 still needs an
+are ignored by Python's Pydantic defaults. Phase 7 supplies a separate
 order-preserving parser for raw Python requests and responses that lack this
 metadata.
 
@@ -320,6 +320,46 @@ empty answers and cannot express most duplicates through dictionaries; Swift
 chooses safe, unambiguous inputs instead. Offline injected-logit tests reproduce
 all four fixture answers and five packed forwards, and the public API exact
 rounded outputs pass through the production model on Xcode MLX CPU and GPU.
+
+## Phase 7 HTTP boundary
+
+`VonHTTP` separates raw wire compatibility from Phase 6's typed Codable
+contract. `OrderedJSON` parses and serializes objects without losing insertion
+order or permitting duplicate keys. `VonWireCodec` converts metadata-free
+Python requests into ordered Swift types and emits successful responses in the
+same field/object order as pinned Python `von serve`; no `_order` metadata or
+Swift keyed-container iteration participates in this path.
+
+The codec deliberately implements a strict subset at the trust boundary. It
+caps JSON depth/nodes/string/container sizes and inference-significant work
+(question count, planned forwards and markers, options, score examples, and
+rendered/packed bytes), rejects empty Choice/Score criteria, literal mask
+injection, and ambiguous duplicate keys, and supports only the Python coercions
+covered by parity tests. Before inference it also serializes a conservative
+successful response shape so escaped request-controlled answer/Choice/
+probability keys and Score legends cannot exceed the 1 MiB response cap after
+work has already run. Successful
+Choice, default/explicit Noul, Score, reordered state/criteria/questions, and
+GET payloads match ordered Python response bytes. Rejected inputs compare by
+HTTP status category because Swift sanitizes errors and intentionally accepts a
+narrower input language.
+
+`VonHTTPServer` is a bounded SwiftNIO HTTP/1.1 shell: raw/decoded metadata and
+body budgets, connection/request/inference admission caps, absolute header/body/
+request deadlines, idle timeout, timing-safe Bearer auth, and bounded graceful
+shutdown. It emits `100 Continue` only after authentication, declared body
+length/size, and request-admission checks; unsupported expectations receive 417
+without waiting for a body. Authentication is enabled by `VON_API_KEY`; a
+non-loopback bind without a key fails closed. CORS is disabled unless `VON_CORS_ORIGINS` supplies
+an explicit allowlist. This intentionally differs from Python's wildcard CORS
+default, and wildcard origins are rejected.
+
+The `von serve` executable requires explicit `--port`, `--tokenizer`, and
+`--weights`, defaults only to loopback host `127.0.0.1`, validates local files,
+and installs SIGINT/SIGTERM shutdown handling. Opt-in live parity uses an
+external pinned Python server URL and starts Swift only on `127.0.0.1:0`;
+`tools/run_http_parity.sh` performs the safe loopback Python lifecycle and
+Metal-enabled Xcode test invocation without using ports 8000 or 8014.
 
 ## Porting notes / risk areas
 

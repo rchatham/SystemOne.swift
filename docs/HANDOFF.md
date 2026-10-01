@@ -27,8 +27,8 @@ Read these first, in order:
 | 4 — ModernBERT backbone (MLX Swift) | ✅ done |
 | 5 — Decision head + calibration | ✅ done |
 | 6 — Public API | ✅ done |
-| 7 — HTTP server `/v1/systemone` | ⬅️ **next** |
-| 8 — Performance | ⬜ |
+| 7 — HTTP server `/v1/systemone` | ✅ done |
+| 8 — Performance | ⬅️ **next** |
 
 ## Environment facts
 
@@ -162,8 +162,8 @@ Measured global max absolute errors were:
 local folder and weights only through `VonWeights.verifiedProduction`. It owns
 all MLX state, evaluates lazy output inside actor isolation, and converts to raw
 `[Float]` only after `eval`. `decide`, `judge`, `rate`, and `systemOne` evaluate
-ordered question entries sequentially; batching remains Phase 8 and HTTP remains
-Phase 7.
+ordered question entries sequentially; batching remains Phase 8. Phase 7 wraps
+this actor in the order-preserving HTTP adapter described below.
 
 Public request/response models are `Codable & Sendable`. Inference-facing state
 fields, Choice options, questions, answers, probabilities, and legends use
@@ -189,6 +189,55 @@ input before it is passed to the injected provider or production model.
 Offline tests inject ordered logits and reproduce the fixture's four cases and
 five packed forwards exactly. The public production API also passed exact
 rounded golden outputs through the Xcode-built bundle on both MLX CPU and GPU.
+
+## Phase 7 HTTP server and CLI
+
+`VonHTTP` provides an order-preserving parser/serializer, a metadata-free
+`VonWireCodec`, and a security-hardened SwiftNIO HTTP/1.1 server. The wire path
+never uses Swift `Codable` dictionary iteration. It preserves Python request
+order and emits Python field/object order for successful responses. GET `/`,
+`/health`, and `/v1/models` match pinned Python bytes; POST `/v1/systemone`
+uses the public `VonEngine` actor.
+
+The server bounds raw and decoded headers/trailers, body bytes, connections,
+admitted/queued inference, semantic inference work, worst-case escaped response
+size, request/header/body/idle deadlines, and shutdown drain time. Empty Choice
+or Score criteria and requests whose successful response could exceed 1 MiB are
+rejected as 422 before inference. `Expect: 100-continue` receives 100 only after
+authentication, declared-length/size, and request-admission checks; unsupported
+expectations receive 417. Authentication comparisons are timing-safe, and
+non-loopback binds fail closed without a key. CORS is disabled by default and
+accepts only `VON_CORS_ORIGINS` explicit origins; unlike Python's wildcard
+default, `*` is intentionally rejected. Swift also intentionally rejects a
+strict resource/syntax subset of Python inputs; error parity is therefore by
+HTTP status category rather than error text.
+
+`von serve` requires all of `--port`, `--tokenizer`, and `--weights`, defaults
+only the host to `127.0.0.1`, validates local artifacts before model loading,
+and handles SIGINT/SIGTERM through bounded server shutdown. It never assigns
+port 8000. Example:
+
+```bash
+VON_API_KEY=replace-me VON_CORS_ORIGINS=https://app.example \
+  swift run von serve --host 127.0.0.1 --port 8015 \
+  --tokenizer Tests/VonSwiftTests/Resources/Tokenizer \
+  --weights weights/option_marker.safetensors
+```
+
+`Tests/VonHTTPTests/PythonServerParityTests.swift` is opt-in with
+`VON_HTTP_PARITY=1`, an external loopback `VON_PYTHON_SERVER_URL`, production
+weights, tokenizer resources, and a shared API key. It starts only Swift on
+`127.0.0.1:0`. `tools/run_http_parity.sh` safely supplies the external pinned
+Python server: it avoids assigned ports 8000/8014, verifies 8015 is clear,
+inventories Docker, traps cleanup, waits for health, and runs the Xcode bundle.
+Observed local verification on 2026-10-01 (not durable CI evidence) used the
+exact command `tools/run_http_parity.sh` against the repo-local pinned
+`von-sdk==1.1.1`. The Xcode build reported `TEST BUILD SUCCEEDED`, and the
+selected `PythonServerParityTests` run reported 1 test executed with 0 failures
+in 5.405 seconds. That local run covered ordered Choice, default/explicit Noul,
+Score, reordered state/criteria/questions, exact successful raw JSON/GET
+payloads, and auth/error status categories. Re-run the command rather than
+assuming the observation remains valid on another machine or revision.
 
 ## Build & test
 
@@ -216,7 +265,7 @@ the isolated scorer, composed raw logits, calibrated probabilities, and rounded
 answers; run it once with each device:
 
 ```bash
-xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \
+xcodebuild build-for-testing -scheme VonSwift-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 VON_OPTION_MARKER_PARITY=1 VON_OPTION_MARKER_DEVICE=cpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
@@ -239,7 +288,7 @@ The Phase 4 backbone-only parity command remains available (set device to
 `cpu` for the CPU oracle comparison):
 
 ```bash
-xcodebuild build-for-testing -scheme VonSwift -destination 'platform=macOS,arch=arm64' \
+xcodebuild build-for-testing -scheme VonSwift-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 VON_MODERNBERT_PARITY=1 VON_MODERNBERT_DEVICE=gpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
@@ -270,7 +319,6 @@ relative `1e-6`; structure, order, types, and non-floats remain exact.
 - The model and decision parity paths are float32-first. Precision/performance
   changes must retain the golden path and its mixed float32/double calibration
   boundary.
-- Phase 6 Codable is a typed Swift interchange contract, not a raw Python HTTP
-  wire decoder. Preserving insertion order in metadata-free JSON and reproducing
-  Python/Pydantic raw untyped omission, default, and coercion behavior are
-  explicit Phase 7 blockers and are intentionally deferred to its HTTP adapter.
+- Phase 6 Codable remains a typed Swift interchange contract, not the raw HTTP
+  decoder. Phase 7's `OrderedJSON`/`VonWireCodec` handles metadata-free wire
+  order and a documented, bounded subset of Python/Pydantic coercions.
