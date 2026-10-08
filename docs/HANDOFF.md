@@ -28,7 +28,7 @@ Read these first, in order:
 | 5 — Decision head + calibration | ✅ done |
 | 6 — Public API | ✅ done |
 | 7 — HTTP server `/v1/systemone` | ✅ done |
-| 8 — Performance | ⬅️ **next** |
+| 8 — Performance | ✅ done |
 
 ## Environment facts
 
@@ -161,9 +161,10 @@ Measured global max absolute errors were:
 `VonEngine` is a public actor that loads a tokenizer only from an explicit
 local folder and weights only through `VonWeights.verifiedProduction`. It owns
 all MLX state, evaluates lazy output inside actor isolation, and converts to raw
-`[Float]` only after `eval`. `decide`, `judge`, `rate`, and `systemOne` evaluate
-ordered question entries sequentially; batching remains Phase 8. Phase 7 wraps
-this actor in the order-preserving HTTP adapter described below.
+`[Float]` only after `eval`. `systemOne` uses a two-phase plan-then-execute
+pipeline with bounded, stable microbatch fan-out (see Phase 8 and
+[PERFORMANCE.md](PERFORMANCE.md)). Phase 7 wraps this actor in the
+order-preserving HTTP adapter described below.
 
 Public request/response models are `Codable & Sendable`. Inference-facing state
 fields, Choice options, questions, answers, probabilities, and legends use
@@ -311,6 +312,34 @@ relative `1e-6`; structure, order, types, and non-floats remain exact.
   metadata/manifest fixtures (small JSON) are committed under `testdata/`.
 - Conventional Commits; see `~/.pi/agent/skills/git-conventions/SKILL.md`.
 
+## Phase 8 performance
+
+`VonBatchingStrategy` (`.sequential` / `.automatic` / `.batched`) is a method
+parameter on `systemOne` (default `.automatic`). It is not serialized or on the
+HTTP wire. `VonEngine.systemOne` pre-plans all inference rows and fans out via
+bounded greedy microbatches under an absolute B×L² ≤ 1,048,576 guard and
+amplification ceilings (auto 1.5×, batched 2.0×).
+
+`VonOptionMarkerModel.forward` accepts ragged `[VonPackedInput]` rows: right-pad
+to max length, flatten marker positions, run one backbone+scorer forward, return
+row-major logits with `rowOffsets`. Padded queries in sliding-attention layers
+see only themselves.
+
+Release Xcode GPU benchmarks on Apple M4 Max (see [PERFORMANCE.md](PERFORMANCE.md)
+for full tables):
+
+| Strategy | Heterogeneous 4-question | Homogeneous n=4 | n=16 |
+|---|---|---|---|
+| `.sequential` | 67.0 ms | 40.6 ms | 159.5 ms |
+| `.automatic` | 55.0 ms | 16.1 ms | 46.3 ms |
+| `.batched` | 46.5 ms | — | — |
+
+GPU batch model parity: max abs 7.05719×10⁻⁵ vs Python batch and
+4.386902×10⁻⁵ vs Swift sequential. Public engine rounded parity GPU passed.
+
+CPU benchmarks and CPU batch parity can trigger macOS's Metal watchdog;
+CPU is diagnostic only. GPU (Release Xcode, Metal) is the acceptance target.
+
 ## Open questions / risks
 
 - `mlx-swift` runtime testing requires an Xcode-produced Metal library even for
@@ -322,3 +351,8 @@ relative `1e-6`; structure, order, types, and non-floats remain exact.
 - Phase 6 Codable remains a typed Swift interchange contract, not the raw HTTP
   decoder. Phase 7's `OrderedJSON`/`VonWireCodec` handles metadata-free wire
   order and a documented, bounded subset of Python/Pydantic coercions.
+- CPU benchmarks can hit the Metal watchdog; always use Release Xcode GPU for
+  acceptance.
+- The ordered bounded JSON parser was upstreamed locally on JSON.swift feature
+  branch `dddbe8b` but VonSwift retains its current parser until a remote
+  release/tag exists.

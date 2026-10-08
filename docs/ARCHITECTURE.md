@@ -285,9 +285,11 @@ absolute errors are `9.536743e-7` / `2.861023e-6` (isolated scorer CPU/GPU),
 `VonEngine` is an actor and the only high-level production owner of the
 `VonTokenizer` and `VonOptionMarkerModel`. Its async initializer accepts an
 explicit tokenizer folder and a verified production safetensors URL; no model
-name resolution, network fallback, HTTP, or question batching exists. Each
-packed input is run and `eval`uated under actor isolation before logits are
-materialized as `[Float]` and passed to `VonDecisionMath`.
+name resolution, network fallback, or HTTP exists. `systemOne` uses a two-phase
+plan-then-execute pipeline with bounded, stable microbatch fan-out (see
+[PERFORMANCE.md](PERFORMANCE.md)). Each packed input is run and `eval`uated
+under actor isolation before logits are materialized as `[Float]` and passed
+to `VonDecisionMath`.
 
 The public `Choice`, `Noul`, `Score`, `Question`, answer, request, response, and
 usage models are typed `Codable & Sendable` values. All inference-significant
@@ -300,6 +302,11 @@ instead of relying on `KeyedDecodingContainer.allKeys` order. The extra fields
 are ignored by Python's Pydantic defaults. Phase 7 supplies a separate
 order-preserving parser for raw Python requests and responses that lack this
 metadata.
+
+`VonBatchingStrategy` is a method parameter on `systemOne` (`.sequential` /
+`.automatic` / `.batched`). It is not serialized, not on the HTTP wire, and
+not part of `SystemOneRequest`. The default is `.automatic`. See
+[docs/PERFORMANCE.md](PERFORMANCE.md) for the microbatch policy and benchmarks.
 
 Primitive rendering is shared with tokenizer packing and exactly preserves the
 pinned backend's edge semantics:
@@ -320,6 +327,50 @@ empty answers and cannot express most duplicates through dictionaries; Swift
 chooses safe, unambiguous inputs instead. Offline injected-logit tests reproduce
 all four fixture answers and five packed forwards, and the public API exact
 rounded outputs pass through the production model on Xcode MLX CPU and GPU.
+
+## Phase 8 bounded microbatch fan-out
+
+`VonEngine.systemOne` pre-plans every inference row (primary + default-Noul null
+passes) before any forward pass. Rows are sorted by descending sequence length
+and greedily binned into microbatches by `VonEngine.microbatchIndices`.
+
+### Microbatch policy
+
+Two guards, both checked with overflow-aware integer arithmetic:
+
+- **Absolute**: `rows × max(L²) ≤ 1,048,576`
+- **Relative** (amplification): `rows × max(L²) ≤ maxAmplification × ΣL²`
+
+`maxAmplification` is `nil` (`.sequential` — each row alone), `1.5`
+(`.automatic`), or `2.0` (`.batched`). The absolute bound always applies when
+`maxAmplification` is non-nil.
+
+### Right-padded batch forward
+
+`VonOptionMarkerModel.forward` accepts ragged `[VonPackedInput]` rows:
+
+1. Right-pad all `inputIDs` to the maximum row length with the tokenizer's PAD
+   token id.
+2. Extend attention masks: real tokens keep their original mask; padding
+   positions get `0`.
+3. Flatten marker positions from row-local to padded global indices.
+4. Run a single `VonModernBERT.forward` on the batch.
+5. Reshape hidden states to `(B×L, 1024)`, gather at flattened marker
+   positions, score, and return row-major logits with `rowOffsets`.
+
+Padded queries in sliding-attention layers see only themselves via
+`row[query] == 0 ? query == key : …`, so padding never bleeds into real marker
+representations.
+
+### Cancellation
+
+`Task.checkCancellation()` is called at each batch boundary, both in the
+injected-provider and production paths.
+
+### Default Noul null row
+
+Default Noul's null-state pass (empty state) is pre-planned as a separate row
+and may co-batch with the primary row if lengths are compatible.
 
 ## Phase 7 HTTP boundary
 
@@ -379,3 +430,8 @@ Metal-enabled Xcode test invocation without using ports 8000 or 8014.
    only when neither explicit criterion description is truthy.
 5. float32 everywhere first; consider fp16/bf16 later for speed, but parity
    tests must run in the same precision as the goldens.
+6. **CPU benchmarks** can trigger macOS's Metal watchdog on large batches;
+   CPU is diagnostic only. GPU (Release Xcode, Metal) is the acceptance target.
+7. **Batch padding** in sliding-attention layers requires that padded queries
+   see only themselves; the `row[query] == 0` guard prevents padding from
+   bleeding into real marker representations.

@@ -146,9 +146,17 @@ production artifact hash, schema, and per-tensor payload-hash integration test.
       Choice, default/explicit Noul, Score, reordered inputs, GET routes, auth,
       and error status categories
 
-### Phase 8 — Performance
-- [ ] Latency benchmark vs Python von on MPS
-- [ ] Single-pass multi-question fan-out (`system_one` semantics)
+### Phase 8 — Performance ✅ DONE
+- [x] Latency benchmark vs Python von on MPS (see [PERFORMANCE.md](PERFORMANCE.md))
+- [x] Single-pass multi-question fan-out (`system_one` semantics) with bounded, stable microbatch batching
+- [x] `VonBatchingStrategy` (`.sequential` / `.automatic` / `.batched`), method parameter only, not HTTP wire
+- [x] Absolute B×L² ≤ 1,048,576 guard and amplification ceilings (auto 1.5×, batched 2.0×)
+- [x] Right-padded batch forward with flattened variable marker scorer
+- [x] Padded query self-attention isolation (padded queries see only themselves)
+- [x] GPU batch model parity: max abs 7.05719×10⁻⁵ vs Python batch and 4.386902×10⁻⁵ vs Swift sequential
+- [x] Public engine rounded parity GPU passed
+- [x] Cancellation support interspersed at batch boundaries
+- [x] Release Xcode benchmark harness (diagnostic only; results not committed)
 
 ## Acceptance criteria (overall)
 

@@ -25,11 +25,18 @@ Python von package as a reference oracle (golden test vectors).
 
 - [docs/PLAN.md](docs/PLAN.md) — phased plan with status
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how von actually works
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — Phase 8 benchmarks and batching architecture
 - [docs/HANDOFF.md](docs/HANDOFF.md) — resume-here state for fresh sessions
 
 ## Status
 
-Phases 0–7 are done; Phase 8 (performance and multi-question fan-out) is next.
+Phases 0–8 are complete. The engine supports bounded, stable microbatch fan-out
+via `VonBatchingStrategy` (`.sequential` / `.automatic` / `.batched`). On an
+Apple M4 Max, the heterogeneous four-question fixture runs at 67.0 ms sequential,
+55.0 ms automatic (default), and 46.5 ms batched; homogeneous rows scale
+sub-linearly (4 rows: 16.1 ms; 16 rows: 46.3 ms). See
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) for full benchmarks.
+
 The public API is a local-only `VonEngine` actor with ordered, typed
 `Codable & Sendable` state, question, and answer models. Phase 7 adds a
 security-hardened SwiftNIO server and order-preserving raw JSON wire codec. The pinned CPU float32
@@ -82,8 +89,10 @@ let answer = try await engine.decide(
 )
 ```
 
-`systemOne` accepts ordered `[QuestionEntry]`; inference is sequential in Phase
-6 and does not batch questions. Choice options and key/value state are also
+`systemOne` accepts ordered `[QuestionEntry]` and an optional
+`batchingStrategy` parameter (default `.automatic`). Rows are pre-planned,
+sorted by length, and greedily packed into bounded microbatches before
+inference. Choice options and key/value state are also
 ordered arrays so model semantics never depend on `Dictionary` iteration.
 Codable values retain Python's keyed objects and add explicit order metadata
 (`state_order`, `question_order`, `criteria_order`, `answer_order`,
