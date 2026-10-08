@@ -8,6 +8,7 @@ let package = Package(
     ],
     products: [
         .library(name: "VonHTTP", targets: ["VonHTTP"]),
+        .executable(name: "von-benchmark", targets: ["VonBenchmark"]),
     ],
     dependencies: [
         .package(
@@ -46,6 +47,15 @@ let package = Package(
         .executableTarget(
             name: "von",
             dependencies: ["VonSwift", "VonHTTP"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .executableTarget(
+            name: "VonBenchmark",
+            dependencies: [
+                "VonSwift",
+                .product(name: "MLX", package: "mlx-swift"),
+            ],
+            path: "Sources/VonBenchmark",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

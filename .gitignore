@@ -12,3 +12,4 @@ __pycache__/
 *.safetensors
 *.bin
 weights/
+benchmark-results/
