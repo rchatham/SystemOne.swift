@@ -19,14 +19,18 @@ final class VonModernBERTTests: XCTestCase {
         )
     }
 
-    func testAdditiveMasksApplyPaddingToKeysOnlyAndUseInclusiveRadius64() {
+    func testAdditiveMasksPreserveFullKeyOnlyMaskingAndInclusiveSlidingRadius() {
         let blocked = -Float.greatestFiniteMagnitude
         let full = VonModernBERT.additiveAttentionMaskValues(
             [[1, 0, 1], [0, 1, 1]],
             type: .full
         )
         XCTAssertEqual(full.shape, [2, 1, 1, 3])
-        XCTAssertEqual(full.values, [0, blocked, 0, blocked, 0, 0])
+        XCTAssertEqual(
+            full.values,
+            [0, blocked, 0, blocked, 0, 0],
+            "full attention remains key-only even for padded queries"
+        )
 
         var keyMask = [Int](repeating: 1, count: 130)
         keyMask[64] = 0
@@ -44,13 +48,26 @@ final class VonModernBERTTests: XCTestCase {
         XCTAssertEqual(value(query: 0, key: 63), 0)
         XCTAssertEqual(value(query: 0, key: 64), blocked, "masked keys remain blocked")
         XCTAssertEqual(value(query: 0, key: 65), blocked, "radius 65 is excluded")
-        XCTAssertEqual(value(query: 64, key: 0), 0, "left boundary at radius 64 is included")
-        XCTAssertEqual(value(query: 64, key: 128), 0, "right boundary at radius 64 is included")
-        XCTAssertEqual(value(query: 64, key: 129), blocked)
+        XCTAssertEqual(value(query: 63, key: 127), 0, "radius 64 is inclusive")
+        XCTAssertEqual(value(query: 63, key: 128), blocked, "radius 65 is excluded")
         XCTAssertEqual(value(query: 65, key: 0), blocked)
-        XCTAssertEqual(value(query: 65, key: 1), 0)
+        XCTAssertEqual(value(query: 65, key: 1), 0, "left radius 64 is inclusive")
         XCTAssertEqual(value(query: 65, key: 64), blocked, "padding is independent of query")
-        XCTAssertEqual(value(query: 65, key: 129), 0)
+        XCTAssertEqual(value(query: 65, key: 129), 0, "right radius 64 is inclusive")
+
+        for key in keyMask.indices {
+            XCTAssertEqual(
+                value(query: 64, key: key),
+                key == 64 ? 0 : blocked,
+                "a padded query must see itself only"
+            )
+        }
+        XCTAssertTrue(sliding.values.allSatisfy(\.isFinite))
+        for query in keyMask.indices {
+            let rowStart = query * keyMask.count
+            let row = sliding.values[rowStart..<(rowStart + keyMask.count)]
+            XCTAssertTrue(row.contains(0), "sliding query row \(query) must not be all-blocked")
+        }
     }
 
     func testInputValidationRejectsMalformedInputs() throws {

@@ -7,6 +7,17 @@ public enum VonOptionMarkerModelError: Error, Equatable, Sendable {
     case emptyMaskPositions
     case invalidMaskPosition(index: Int, value: Int, sequenceLength: Int)
     case markerTokenMismatch(position: Int, tokenID: Int)
+    case emptyBatch
+    case maskPositionsBatchMismatch(expected: Int, actual: Int)
+    case invalidInputRow(batchIndex: Int, error: VonModernBERTError)
+    case emptyMaskPositionsInBatch(batchIndex: Int)
+    case invalidMaskPositionInBatch(
+        batchIndex: Int,
+        index: Int,
+        value: Int,
+        sequenceLength: Int
+    )
+    case markerTokenMismatchInBatch(batchIndex: Int, position: Int, tokenID: Int)
 }
 
 extension VonOptionMarkerModelError: LocalizedError {
@@ -18,8 +29,35 @@ extension VonOptionMarkerModelError: LocalizedError {
             return "Mask position \(index) is \(value), outside a sequence of length \(sequenceLength)."
         case .markerTokenMismatch(let position, let tokenID):
             return "Token \(tokenID) at marker position \(position) is not Von's [MASK] token."
+        case .emptyBatch:
+            return "Option-marker batch inference requires at least one input row."
+        case .maskPositionsBatchMismatch(let expected, let actual):
+            return "Option-marker batch has \(actual) mask-position rows; expected \(expected)."
+        case .invalidInputRow(let batchIndex, let error):
+            return "Option-marker batch row \(batchIndex) is invalid: \(error.localizedDescription)"
+        case .emptyMaskPositionsInBatch(let batchIndex):
+            return "Option-marker batch row \(batchIndex) requires at least one mask position."
+        case .invalidMaskPositionInBatch(
+            let batchIndex,
+            let index,
+            let value,
+            let sequenceLength
+        ):
+            return "Mask position \(index) in batch row \(batchIndex) is \(value), outside a sequence of length \(sequenceLength)."
+        case .markerTokenMismatchInBatch(let batchIndex, let position, let tokenID):
+            return "Token \(tokenID) at marker position \(position) in batch row \(batchIndex) is not Von's [MASK] token."
         }
     }
+}
+
+/// Batched option logits in row-major marker order.
+public struct VonOptionMarkerBatchOutput {
+    /// One lazy rank-one MLX array containing every row's logits.
+    public let logits: MLXArray
+
+    /// Prefix offsets into `logits`; row `i` occupies
+    /// `rowOffsets[i]..<rowOffsets[i + 1]`.
+    public let rowOffsets: [Int]
 }
 
 /// The float32 option scorer shipped with the production Von checkpoint.
@@ -116,9 +154,192 @@ public final class VonOptionMarkerModel {
             .squeezed(axis: 0)
         return scorer.forward(representations)
     }
+
+    /// Runs tokenized requests as one right-padded backbone/scorer batch.
+    public func forward(_ inputs: [VonPackedInput]) throws -> VonOptionMarkerBatchOutput {
+        try forward(
+            inputIDs: inputs.map(\.inputIDs),
+            attentionMask: inputs.map(\.attentionMask),
+            maskPositions: inputs.map(\.maskPositions)
+        )
+    }
+
+    /// Runs ragged rows as one right-padded backbone/scorer batch.
+    ///
+    /// Padding is internal and never changes marker positions. The returned
+    /// logits remain lazy and are grouped by `rowOffsets`.
+    public func forward(
+        inputIDs: [[Int]],
+        attentionMask: [[Int]]? = nil,
+        maskPositions: [[Int]]
+    ) throws -> VonOptionMarkerBatchOutput {
+        let batch = try Self.prepareBatch(
+            inputIDs: inputIDs,
+            attentionMask: attentionMask,
+            maskPositions: maskPositions
+        )
+        let output = try backbone.forward(
+            inputIDs: batch.inputIDs,
+            attentionMask: batch.attentionMask
+        )
+        let flattenedHidden = output.lastHiddenState.reshaped(
+            batch.inputIDs.count * batch.maximumSequenceLength,
+            VonModernBERT.hiddenSize
+        )
+        let representations = flattenedHidden.take(
+            MLXArray(batch.flattenedMaskPositions),
+            axis: 0
+        )
+        return VonOptionMarkerBatchOutput(
+            logits: scorer.forward(representations),
+            rowOffsets: batch.rowOffsets
+        )
+    }
 }
 
 extension VonOptionMarkerModel {
+    struct PreparedBatch {
+        let inputIDs: [[Int]]
+        let attentionMask: [[Int]]
+        let flattenedMaskPositions: [Int]
+        let rowOffsets: [Int]
+        let maximumSequenceLength: Int
+    }
+
+    static func prepareBatch(
+        inputIDs: [[Int]],
+        attentionMask: [[Int]]?,
+        maskPositions: [[Int]]
+    ) throws -> PreparedBatch {
+        guard !inputIDs.isEmpty else {
+            throw VonOptionMarkerModelError.emptyBatch
+        }
+        if let attentionMask, attentionMask.count != inputIDs.count {
+            throw VonModernBERTError.attentionBatchMismatch(
+                expected: inputIDs.count,
+                actual: attentionMask.count
+            )
+        }
+        guard maskPositions.count == inputIDs.count else {
+            throw VonOptionMarkerModelError.maskPositionsBatchMismatch(
+                expected: inputIDs.count,
+                actual: maskPositions.count
+            )
+        }
+
+        var validatedMasks: [[Int]] = []
+        validatedMasks.reserveCapacity(inputIDs.count)
+        var rowOffsets = [0]
+        rowOffsets.reserveCapacity(inputIDs.count + 1)
+
+        for batchIndex in inputIDs.indices {
+            let rowMask = attentionMask.map { $0[batchIndex] }
+            do {
+                let validated = try VonModernBERT.validateInputs(
+                    inputIDs: [inputIDs[batchIndex]],
+                    attentionMask: rowMask.map { [$0] }
+                )
+                validatedMasks.append(validated[0])
+            } catch let error as VonModernBERTError {
+                throw VonOptionMarkerModelError.invalidInputRow(
+                    batchIndex: batchIndex,
+                    error: remap(error, toBatchIndex: batchIndex)
+                )
+            }
+
+            do {
+                try validateMaskPositions(
+                    maskPositions[batchIndex],
+                    inputIDs: inputIDs[batchIndex]
+                )
+            } catch VonOptionMarkerModelError.emptyMaskPositions {
+                throw VonOptionMarkerModelError.emptyMaskPositionsInBatch(
+                    batchIndex: batchIndex
+                )
+            } catch VonOptionMarkerModelError.invalidMaskPosition(
+                let index,
+                let value,
+                let sequenceLength
+            ) {
+                throw VonOptionMarkerModelError.invalidMaskPositionInBatch(
+                    batchIndex: batchIndex,
+                    index: index,
+                    value: value,
+                    sequenceLength: sequenceLength
+                )
+            } catch VonOptionMarkerModelError.markerTokenMismatch(let position, let tokenID) {
+                throw VonOptionMarkerModelError.markerTokenMismatchInBatch(
+                    batchIndex: batchIndex,
+                    position: position,
+                    tokenID: tokenID
+                )
+            }
+            rowOffsets.append(rowOffsets[rowOffsets.count - 1] + maskPositions[batchIndex].count)
+        }
+
+        let maximumSequenceLength = inputIDs.map(\.count).max()!
+        var paddedIDs: [[Int]] = []
+        var paddedMasks: [[Int]] = []
+        var flattenedMaskPositions: [Int] = []
+        paddedIDs.reserveCapacity(inputIDs.count)
+        paddedMasks.reserveCapacity(inputIDs.count)
+        flattenedMaskPositions.reserveCapacity(rowOffsets.last!)
+
+        for batchIndex in inputIDs.indices {
+            let paddingCount = maximumSequenceLength - inputIDs[batchIndex].count
+            paddedIDs.append(
+                inputIDs[batchIndex]
+                    + [Int](repeating: VonTokenizer.paddingTokenID, count: paddingCount)
+            )
+            paddedMasks.append(
+                validatedMasks[batchIndex] + [Int](repeating: 0, count: paddingCount)
+            )
+            flattenedMaskPositions.append(
+                contentsOf: maskPositions[batchIndex].map {
+                    batchIndex * maximumSequenceLength + $0
+                }
+            )
+        }
+
+        return PreparedBatch(
+            inputIDs: paddedIDs,
+            attentionMask: paddedMasks,
+            flattenedMaskPositions: flattenedMaskPositions,
+            rowOffsets: rowOffsets,
+            maximumSequenceLength: maximumSequenceLength
+        )
+    }
+
+    static func remap(
+        _ error: VonModernBERTError,
+        toBatchIndex batchIndex: Int
+    ) -> VonModernBERTError {
+        switch error {
+        case .invalidTokenID(_, let sequenceIndex, let value):
+            return .invalidTokenID(
+                batchIndex: batchIndex,
+                sequenceIndex: sequenceIndex,
+                value: value
+            )
+        case .attentionSequenceMismatch(_, let expected, let actual):
+            return .attentionSequenceMismatch(
+                batchIndex: batchIndex,
+                expected: expected,
+                actual: actual
+            )
+        case .invalidAttentionMaskValue(_, let sequenceIndex, let value):
+            return .invalidAttentionMaskValue(
+                batchIndex: batchIndex,
+                sequenceIndex: sequenceIndex,
+                value: value
+            )
+        case .noUnmaskedTokens:
+            return .noUnmaskedTokens(batchIndex: batchIndex)
+        default:
+            return error
+        }
+    }
+
     static func validateMaskPositions(_ positions: [Int], inputIDs: [Int]) throws {
         guard !positions.isEmpty else {
             throw VonOptionMarkerModelError.emptyMaskPositions

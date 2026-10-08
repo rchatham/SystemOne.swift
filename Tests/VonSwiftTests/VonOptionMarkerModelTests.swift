@@ -40,6 +40,272 @@ final class VonOptionMarkerModelTests: XCTestCase {
         )
     }
 
+    func testBatchPreparationRightPadsAndBuildsFlatMarkerLayout() throws {
+        let mask = VonTokenizer.maskTokenID
+        let prepared = try VonOptionMarkerModel.prepareBatch(
+            inputIDs: [[10, mask, 11], [mask, mask]],
+            attentionMask: [[1, 1, 0], [1, 1]],
+            maskPositions: [[1], [0, 1]]
+        )
+
+        XCTAssertEqual(prepared.maximumSequenceLength, 3)
+        XCTAssertEqual(
+            prepared.inputIDs,
+            [[10, mask, 11], [mask, mask, VonTokenizer.paddingTokenID]]
+        )
+        XCTAssertEqual(prepared.attentionMask, [[1, 1, 0], [1, 1, 0]])
+        XCTAssertEqual(prepared.flattenedMaskPositions, [1, 3, 4])
+        XCTAssertEqual(prepared.rowOffsets, [0, 1, 3])
+
+        let defaultAttention = try VonOptionMarkerModel.prepareBatch(
+            inputIDs: [[10, mask, 11], [mask, mask]],
+            attentionMask: nil,
+            maskPositions: [[1], [0, 1]]
+        )
+        XCTAssertEqual(defaultAttention.attentionMask, [[1, 1, 1], [1, 1, 0]])
+    }
+
+    func testBatchPreparationReportsTheOriginalRowForInvalidInputAndMarkers() throws {
+        let mask = VonTokenizer.maskTokenID
+        XCTAssertThrowsError(
+            try VonOptionMarkerModel.prepareBatch(
+                inputIDs: [],
+                attentionMask: nil,
+                maskPositions: []
+            )
+        ) { XCTAssertEqual($0 as? VonOptionMarkerModelError, .emptyBatch) }
+        XCTAssertThrowsError(
+            try VonOptionMarkerModel.prepareBatch(
+                inputIDs: [[mask], [mask]],
+                attentionMask: [[1]],
+                maskPositions: [[0], [0]]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? VonModernBERTError,
+                .attentionBatchMismatch(expected: 2, actual: 1)
+            )
+        }
+        XCTAssertThrowsError(
+            try VonOptionMarkerModel.prepareBatch(
+                inputIDs: [[mask], [mask]],
+                attentionMask: [[1], [1, 0]],
+                maskPositions: [[0], [0]]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? VonOptionMarkerModelError,
+                .invalidInputRow(
+                    batchIndex: 1,
+                    error: .attentionSequenceMismatch(batchIndex: 1, expected: 1, actual: 2)
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try VonOptionMarkerModel.prepareBatch(
+                inputIDs: [[mask], []],
+                attentionMask: nil,
+                maskPositions: [[0], [0]]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? VonOptionMarkerModelError,
+                .invalidInputRow(batchIndex: 1, error: .emptySequence)
+            )
+        }
+        XCTAssertThrowsError(
+            try VonOptionMarkerModel.prepareBatch(
+                inputIDs: [[mask], [mask, VonModernBERT.vocabularySize]],
+                attentionMask: nil,
+                maskPositions: [[0], [0]]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? VonOptionMarkerModelError,
+                .invalidInputRow(
+                    batchIndex: 1,
+                    error: .invalidTokenID(
+                        batchIndex: 1,
+                        sequenceIndex: 1,
+                        value: VonModernBERT.vocabularySize
+                    )
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try VonOptionMarkerModel.prepareBatch(
+                inputIDs: [[mask], [1, 2]],
+                attentionMask: nil,
+                maskPositions: [[0], [1]]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? VonOptionMarkerModelError,
+                .markerTokenMismatchInBatch(batchIndex: 1, position: 1, tokenID: 2)
+            )
+        }
+        XCTAssertThrowsError(
+            try VonOptionMarkerModel.prepareBatch(
+                inputIDs: [[mask], [mask]],
+                attentionMask: nil,
+                maskPositions: [[0], [1]]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? VonOptionMarkerModelError,
+                .invalidMaskPositionInBatch(
+                    batchIndex: 1,
+                    index: 0,
+                    value: 1,
+                    sequenceLength: 1
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try VonOptionMarkerModel.prepareBatch(
+                inputIDs: [[mask], [mask]],
+                attentionMask: nil,
+                maskPositions: [[0], []]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? VonOptionMarkerModelError,
+                .emptyMaskPositionsInBatch(batchIndex: 1)
+            )
+        }
+        XCTAssertThrowsError(
+            try VonOptionMarkerModel.prepareBatch(
+                inputIDs: [[mask]],
+                attentionMask: nil,
+                maskPositions: []
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? VonOptionMarkerModelError,
+                .maskPositionsBatchMismatch(expected: 1, actual: 0)
+            )
+        }
+    }
+
+    func testProductionBatchParityWhenConfigured() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["VON_OPTION_MARKER_BATCH_PARITY"] == "1" else {
+            throw XCTSkip("Set VON_OPTION_MARKER_BATCH_PARITY=1 to run batch parity.")
+        }
+        guard let weightsPath = environment["VON_PRODUCTION_WEIGHTS_PATH"], !weightsPath.isEmpty else {
+            throw XCTSkip("Set VON_PRODUCTION_WEIGHTS_PATH to the verified production artifact.")
+        }
+
+        let deviceName = environment["VON_OPTION_MARKER_BATCH_DEVICE"] ?? "cpu"
+        let device: Device
+        switch deviceName {
+        case "cpu":
+            device = .cpu
+        case "gpu":
+            device = .gpu
+        default:
+            return XCTFail(
+                "VON_OPTION_MARKER_BATCH_DEVICE must be 'cpu' or 'gpu', got \(deviceName)"
+            )
+        }
+
+        let source = try JSONDecoder().decode(
+            GoldenFixture.self,
+            from: Data(contentsOf: fixtureURL("von_golden_v1.json"))
+        )
+        let batchFixture = try JSONDecoder().decode(
+            BatchGoldenFixture.self,
+            from: Data(contentsOf: fixtureURL("von_batch_golden_v1.json"))
+        )
+        XCTAssertEqual(source.forwards.count, 5)
+        XCTAssertEqual(batchFixture.batchCapture.rows.count, 5)
+
+        try Device.withDefaultDevice(device) {
+            let weights = try VonWeights.verifiedProduction(
+                contentsOf: URL(fileURLWithPath: weightsPath)
+            )
+            let model = VonOptionMarkerModel(weights: weights)
+            let packedInputs = source.forwards.map { forward in
+                VonPackedInput(
+                    text: "",
+                    inputIDs: forward.inputIDs,
+                    attentionMask: forward.attentionMask,
+                    maskPositions: forward.maskPositions
+                )
+            }
+            let batch = try model.forward(packedInputs)
+            eval(batch.logits)
+            let flatBatchLogits = batch.logits.asArray(Float.self)
+
+            var expectedOffsets = [0]
+            for (index, row) in batchFixture.batchCapture.rows.enumerated() {
+                expectedOffsets.append(expectedOffsets[index] + row.batchedRawLogits.count)
+            }
+            XCTAssertEqual(batch.rowOffsets, expectedOffsets)
+
+            XCTAssertTrue(flatBatchLogits.allSatisfy(\.isFinite), "batched logits must be finite")
+            var maximumBatchOracleError: Float = 0
+            var maximumBatchSequentialError: Float = 0
+            for index in source.forwards.indices {
+                let sourceForward = source.forwards[index]
+                let oracle = batchFixture.batchCapture.rows[index]
+                let actualBatch = Array(
+                    flatBatchLogits[batch.rowOffsets[index]..<batch.rowOffsets[index + 1]]
+                )
+                let batchError = maxAbsoluteError(
+                    actualBatch,
+                    oracle.batchedRawLogits.map(Float.init)
+                )
+                maximumBatchOracleError = max(maximumBatchOracleError, batchError)
+                XCTAssertLessThan(batchError, 1e-3, "batched oracle row \(index)")
+
+                let sequential = try model.forward(
+                    inputIDs: sourceForward.inputIDs,
+                    attentionMask: sourceForward.attentionMask,
+                    maskPositions: sourceForward.maskPositions
+                )
+                eval(sequential)
+                let sequentialLogits = sequential.asArray(Float.self)
+                XCTAssertTrue(
+                    sequentialLogits.allSatisfy(\.isFinite),
+                    "sequential logits row \(index) must be finite"
+                )
+                let sequentialOracleError = maxAbsoluteError(
+                    sequentialLogits,
+                    oracle.sequentialRawLogits.map(Float.init)
+                )
+                XCTAssertLessThan(
+                    sequentialOracleError,
+                    1e-3,
+                    "sequential Swift oracle row \(index)"
+                )
+                let batchSequentialError = maxAbsoluteError(actualBatch, sequentialLogits)
+                maximumBatchSequentialError = max(
+                    maximumBatchSequentialError,
+                    batchSequentialError
+                )
+                XCTAssertLessThan(
+                    batchSequentialError,
+                    1e-3,
+                    "batched versus sequential Swift row \(index)"
+                )
+                print(
+                    "OptionMarker \(deviceName) batch row \(index) "
+                        + "oracle_max_abs=\(batchError) "
+                        + "sequential_max_abs=\(batchSequentialError)"
+                )
+            }
+            print(
+                "OptionMarker \(deviceName) BATCH_ORACLE_MAX_ABS="
+                    + "\(maximumBatchOracleError)"
+            )
+            print(
+                "OptionMarker \(deviceName) BATCH_SEQUENTIAL_MAX_ABS="
+                    + "\(maximumBatchSequentialError)"
+            )
+        }
+    }
+
     func testProductionScorerAndComposedParityWhenConfigured() throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["VON_OPTION_MARKER_PARITY"] == "1" else {
@@ -195,6 +461,28 @@ private extension VonOptionMarkerModelTests {
     struct GoldenFixture: Decodable {
         let cases: [GoldenCase]
         let forwards: [GoldenForward]
+    }
+
+    struct BatchGoldenFixture: Decodable {
+        let batchCapture: BatchCapture
+
+        enum CodingKeys: String, CodingKey {
+            case batchCapture = "batch_capture"
+        }
+    }
+
+    struct BatchCapture: Decodable {
+        let rows: [BatchRow]
+    }
+
+    struct BatchRow: Decodable {
+        let batchedRawLogits: [Double]
+        let sequentialRawLogits: [Double]
+
+        enum CodingKeys: String, CodingKey {
+            case batchedRawLogits = "batched_raw_logits"
+            case sequentialRawLogits = "sequential_raw_logits"
+        }
     }
 
     struct GoldenCase: Decodable {

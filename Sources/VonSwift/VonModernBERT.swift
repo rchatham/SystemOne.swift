@@ -291,8 +291,12 @@ extension VonModernBERT {
             for row in attentionMask {
                 for query in 0..<sequenceLength {
                     for key in 0..<sequenceLength {
-                        let isVisible = row[key] == 1
-                            && abs(query - key) <= slidingAttentionRadius
+                        // Real queries retain ModernBERT's key-only padding and
+                        // inclusive local window. A padded query sees only
+                        // itself so SDPA never receives an all-blocked row.
+                        let isVisible = row[query] == 0
+                            ? query == key
+                            : row[key] == 1 && abs(query - key) <= slidingAttentionRadius
                         values.append(isVisible ? 0 : blocked)
                     }
                 }
