@@ -1,4 +1,5 @@
 import Foundation
+import JSON
 import XCTest
 
 @testable import VonHTTP

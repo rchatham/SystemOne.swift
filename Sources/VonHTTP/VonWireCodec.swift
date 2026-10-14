@@ -1,4 +1,5 @@
 import Foundation
+import JSON
 import VonSwift
 
 /// Failures while adapting metadata-free Python Von HTTP JSON to Swift types.
