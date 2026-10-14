@@ -7,8 +7,9 @@ let package = Package(
         .macOS(.v14),
     ],
     products: [
+        .library(name: "VonSwift", targets: ["VonSwift"]),
         .library(name: "VonHTTP", targets: ["VonHTTP"]),
-        .executable(name: "von-benchmark", targets: ["VonBenchmark"]),
+        .executable(name: "von", targets: ["von"]),
     ],
     dependencies: [
         .package(
