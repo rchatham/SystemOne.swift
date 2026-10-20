@@ -201,4 +201,13 @@ per-tensor payload-hash integration test.
 
 ## License
 
-TBD (will mirror Apache-2.0 implications of the reference implementation).
+VonSwift is licensed under the Apache License 2.0 (see `LICENSE`). It is an
+independent Swift + MLX port of the [von](https://github.com/wfzyx/von)
+System One decision model, which is also Apache-2.0. Attribution for the
+reference model, the redistributed tokenizer assets, and third-party
+Swift dependencies is recorded in `THIRD_PARTY_NOTICES.md`.
+
+Model weights are intentionally not committed. The converted
+`option_marker.safetensors` artifact is derived from the Apache-2.0
+`option_marker.pt` checkpoint and may be redistributed under that license;
+VonSwift defaults to a user-generated, checksum-verified artifact.
