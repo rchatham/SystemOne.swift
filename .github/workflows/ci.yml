@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      model-parity:
+        description: "Run production-weight GPU parity (downloads the checkpoint and installs PyTorch)"
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build
+
+      - name: Run Swift tests
+        run: swift test
+
+      - name: Run Python fixture tests
+        run: python3 -m unittest discover -s Tests -p 'test_*.py'
+
+      - name: Validate shell scripts
+        run: bash -n tools/*.sh
+
+  model-parity:
+    name: Production-weight GPU parity
+    if: github.event_name == 'workflow_dispatch' && inputs.model-parity
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install conversion dependencies
+        run: pip install torch==2.14.0 safetensors==0.8.0
+
+      - name: Download pinned checkpoint
+        run: python3 tools/download_model.py
+
+      - name: Verify downloaded checkpoint
+        run: python3 tools/download_model.py --check
+
+      - name: Convert to safetensors
+        run: python3 tools/convert_option_marker.py --source weights/option_marker.pt
+
+      - name: Verify converted artifact
+        run: python3 tools/convert_option_marker.py --check
+
+      - name: Build Xcode test bundle
+        run: |
+          xcodebuild build-for-testing \
+            -scheme VonSwift-Package \
+            -destination 'platform=macOS,arch=arm64' \
+            -configuration Release \
+            -derivedDataPath .build/xcode
+
+      - name: Public API parity (GPU)
+        env:
+          VON_PUBLIC_API_PARITY: "1"
+          VON_PUBLIC_API_DEVICE: gpu
+          VON_PRODUCTION_WEIGHTS_PATH: "${{ github.workspace }}/weights/option_marker.safetensors"
+        run: |
+          xcrun xctest \
+            -XCTest VonSwiftTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
+            .build/xcode/Build/Products/Release/VonSwiftTests.xctest

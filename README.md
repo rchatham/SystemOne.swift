@@ -160,13 +160,43 @@ swift test
 .venv/bin/python -m unittest discover -s Tests -p 'test_*.py'
 ```
 
-Create and verify the local production artifact separately:
+## Model installation
 
-```bash
-.venv/bin/python tools/convert_option_marker.py
-.venv/bin/python tools/convert_option_marker.py --check
-VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
-```
+The inference weights are intentionally not committed. Install them locally from
+the pinned, Apache-2.0 `wfzyx/von` checkpoint in three steps.
+
+1. Create a Python environment with the pinned conversion dependencies
+   (`torch==2.14.0`, `safetensors==0.8.0`):
+
+   ```bash
+   uv venv .venv
+   uv pip install --python .venv/bin/python torch==2.14.0 safetensors==0.8.0
+   ```
+
+   (A plain `python3 -m venv .venv` plus
+   `pip install torch==2.14.0 safetensors==0.8.0` works equally well for
+   conversion alone; the reference-oracle `von-sdk==1.1.1` is only needed to
+   regenerate golden vectors.)
+
+2. Download the pinned `option_marker.pt` checkpoint and verify its SHA-256:
+
+   ```bash
+   python3 tools/download_model.py
+   python3 tools/download_model.py --check
+   ```
+
+3. Convert it to the verified `option_marker.safetensors` artifact and confirm:
+
+   ```bash
+   .venv/bin/python tools/convert_option_marker.py --source weights/option_marker.pt
+   .venv/bin/python tools/convert_option_marker.py --check
+   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" swift test
+   ```
+
+Both the download and conversion steps are checksum-verified and fail closed on
+any deviation from the committed manifest. The converted artifact is derived
+from an Apache-2.0 checkpoint and may be redistributed under that license, but
+VonSwift defaults to this user-generated, verified local install.
 
 For CPU/GPU public-API parity, use Xcode's Metal-enabled test bundle (the plain
 SwiftPM test bundle lacks the Metal library):
@@ -201,4 +231,13 @@ per-tensor payload-hash integration test.
 
 ## License
 
-TBD (will mirror Apache-2.0 implications of the reference implementation).
+VonSwift is licensed under the Apache License 2.0 (see `LICENSE`). It is an
+independent Swift + MLX port of the [von](https://github.com/wfzyx/von)
+System One decision model, which is also Apache-2.0. Attribution for the
+reference model, the redistributed tokenizer assets, and third-party
+Swift dependencies is recorded in `THIRD_PARTY_NOTICES.md`.
+
+Model weights are intentionally not committed. The converted
+`option_marker.safetensors` artifact is derived from the Apache-2.0
+`option_marker.pt` checkpoint and may be redistributed under that license;
+VonSwift defaults to a user-generated, checksum-verified artifact.
