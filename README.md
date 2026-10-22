@@ -27,6 +27,7 @@ Python von package as a reference oracle (golden test vectors).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how von actually works
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — Phase 8 benchmarks and batching architecture
 - [docs/HANDOFF.md](docs/HANDOFF.md) — resume-here state for fresh sessions
+- [Examples/VonHarness](Examples/VonHarness/README.md) — iOS app harness for running the engine on an iPhone
 
 ## Status
 

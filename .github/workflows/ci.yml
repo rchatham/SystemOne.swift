@@ -6,7 +6,23 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      model-parity:
+      ios-harness:
+    name: Build iOS harness
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build VonHarness for iOS devices
+        run: |
+          xcodebuild build \
+            -project Examples/VonHarness/VonHarness.xcodeproj \
+            -scheme VonHarness \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/xcode-ios \
+            CODE_SIGNING_ALLOWED=NO
+
+  model-parity:
         description: "Run production-weight GPU parity (downloads the checkpoint and installs PyTorch)"
         type: boolean
         default: false

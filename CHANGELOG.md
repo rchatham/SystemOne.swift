@@ -4,6 +4,15 @@ All notable changes to VonSwift are documented here. The project follows
 [Semantic Versioning](https://semver.org/) and
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [Unreleased]
+
+### Added
+
+- iOS 17 platform support for the `VonSwift` library.
+- `Examples/VonHarness`, a SwiftUI app that loads the verified weights on an
+  iPhone or iPad and reports `systemOne` answers, latency, and memory.
+- CI build of the harness for generic iOS devices.
+
 ## [0.1.0] - 2026-10-20
 
 Initial release. A native Swift + MLX implementation of the
