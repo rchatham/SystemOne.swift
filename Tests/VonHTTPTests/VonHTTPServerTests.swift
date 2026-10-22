@@ -984,7 +984,13 @@ final class VonHTTPServerTests: XCTestCase {
                 if index > 0 { try await Task.sleep(nanoseconds: intervalNanoseconds) }
                 var buffer = channel!.allocator.buffer(capacity: text.utf8.count)
                 buffer.writeString(text)
-                try await channel!.writeAndFlush(buffer).get()
+                do {
+                    try await channel!.writeAndFlush(buffer).get()
+                } catch {
+                    // On a slow host the server can answer and close before the
+                    // last trickled write; the collector still decides the outcome.
+                    break
+                }
             }
             let response = try await promise.futureResult.get()
             try? await channel!.close().get()
