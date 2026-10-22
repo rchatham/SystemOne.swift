@@ -13,3 +13,6 @@ __pycache__/
 *.bin
 weights/
 benchmark-results/
+
+# Xcode per-user state
+xcuserdata/
