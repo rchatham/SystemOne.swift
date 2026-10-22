@@ -53,11 +53,11 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Build VonHarness for iOS devices
+      - name: Build SystemOneHarness for iOS devices
         run: |
           xcodebuild build \
-            -project Examples/VonHarness/VonHarness.xcodeproj \
-            -scheme VonHarness \
+            -project Examples/SystemOneHarness/SystemOneHarness.xcodeproj \
+            -scheme SystemOneHarness \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath .build/xcode-ios \
@@ -97,7 +97,7 @@ jobs:
       - name: Build Xcode test bundle
         run: |
           xcodebuild build-for-testing \
-            -scheme VonSwift-Package \
+            -scheme SystemOne-Package \
             -destination 'platform=macOS,arch=arm64' \
             -configuration Release \
             -derivedDataPath .build/xcode
@@ -109,5 +109,5 @@ jobs:
           VON_PRODUCTION_WEIGHTS_PATH: "${{ github.workspace }}/weights/option_marker.safetensors"
         run: |
           xcrun xctest \
-            -XCTest VonSwiftTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
-            .build/xcode/Build/Products/Release/VonSwiftTests.xctest
+            -XCTest SystemOneTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
+            .build/xcode/Build/Products/Release/SystemOneTests.xctest
