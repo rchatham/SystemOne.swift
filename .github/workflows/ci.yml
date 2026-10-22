@@ -109,5 +109,5 @@ jobs:
           VON_PRODUCTION_WEIGHTS_PATH: "${{ github.workspace }}/weights/option_marker.safetensors"
         run: |
           xcrun xctest \
-            -XCTest SystemOneTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
-            .build/xcode/Build/Products/Release/SystemOneTests.xctest
+            -XCTest SystemOneVonTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
+            .build/xcode/Build/Products/Release/SystemOneVonTests.xctest

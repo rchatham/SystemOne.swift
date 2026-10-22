@@ -1,6 +1,7 @@
 import Foundation
 import MLX
 import MLXNN
+import SystemOne
 
 /// Errors raised while selecting option-marker representations.
 public enum VonOptionMarkerModelError: Error, Equatable, Sendable {
@@ -80,17 +81,17 @@ public final class VonOptionMarkerScorer {
 
     /// Copies all eight validated scorer tensors into MLX-owned float32 arrays.
     public init(weights: VonScorerWeights) {
-        inputNormWeight = Self.copyToMLX(weights.inputNormWeight)
-        inputNormBias = Self.copyToMLX(weights.inputNormBias)
+        inputNormWeight = weights.inputNormWeight.mlxArray()
+        inputNormBias = weights.inputNormBias.mlxArray()
         dense = Linear(
-            weight: Self.copyToMLX(weights.denseWeight),
-            bias: Self.copyToMLX(weights.denseBias)
+            weight: weights.denseWeight.mlxArray(),
+            bias: weights.denseBias.mlxArray()
         )
-        normWeight = Self.copyToMLX(weights.normWeight)
-        normBias = Self.copyToMLX(weights.normBias)
+        normWeight = weights.normWeight.mlxArray()
+        normBias = weights.normBias.mlxArray()
         outputProjection = Linear(
-            weight: Self.copyToMLX(weights.outputProjectionWeight),
-            bias: Self.copyToMLX(weights.outputProjectionBias)
+            weight: weights.outputProjectionWeight.mlxArray(),
+            bias: weights.outputProjectionBias.mlxArray()
         )
     }
 
@@ -119,12 +120,6 @@ public final class VonOptionMarkerScorer {
         return outputProjection(hidden).squeezed(axis: -1)
     }
 
-    private static func copyToMLX(_ tensor: SafetensorsTensorView) -> MLXArray {
-        tensor.withUnsafeBytes { bytes in
-            let copiedBytes = Data(bytes: bytes.baseAddress!, count: bytes.count)
-            return MLXArray(copiedBytes, tensor.descriptor.shape, dtype: .float32)
-        }
-    }
 }
 
 /// The production ModernBERT backbone composed with its option-marker scorer.

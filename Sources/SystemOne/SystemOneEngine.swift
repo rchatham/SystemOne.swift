@@ -1,5 +1,4 @@
 import Foundation
-import MLX
 
 /// Controls how `systemOne` fans out one forward pass per planned row or
 /// groups compatible rows into padded microbatches.
@@ -36,6 +35,10 @@ public enum SystemOneEngineError: Error, Equatable, Sendable {
     case unexpectedLogitCount(expected: Int, actual: Int)
     /// A batch provider returned row boundaries that do not match the planned rows.
     case unexpectedBatchOffsets(expected: [Int], actual: [Int])
+    /// The model cannot read this kind of media.
+    case unsupportedMedia(model: String)
+    /// A question violates a model-specific constraint.
+    case invalidQuestion(id: String, reason: String)
 }
 
 extension SystemOneEngineError: LocalizedError {
@@ -57,131 +60,57 @@ extension SystemOneEngineError: LocalizedError {
             return "The logits provider returned \(actual) logits; expected \(expected)."
         case .unexpectedBatchOffsets(let expected, let actual):
             return "The batch logits provider returned offsets \(actual); expected \(expected)."
+        case .unsupportedMedia(let model):
+            return "Model \(model) does not accept this media."
+        case .invalidQuestion(let id, let reason):
+            return "Question '\(id)' is invalid: \(reason)"
         }
     }
 }
 
-struct BatchLogitsOutput: Equatable, Sendable {
-    let logits: [Float]
-    let rowOffsets: [Int]
-
-    init(logits: [Float], rowOffsets: [Int]) {
-        self.logits = logits
-        self.rowOffsets = rowOffsets
-    }
-}
-
-struct VonPlannedInferenceRow: Equatable, Sendable {
-    let input: VonPackedInput
-    let expectedLogitCount: Int
-}
-
-enum VonPlannedAnswer: Equatable, Sendable {
-    case choice(keys: [String])
-    case noul
-    case score(descriptions: [String])
-}
-
-struct VonPlannedQuestion: Equatable, Sendable {
-    let id: String
-    let answer: VonPlannedAnswer
-    let primaryRowIndex: Int
-    let nullRowIndex: Int?
-    let stateTokenCount: Int
-}
-
 /// Local, actor-isolated System One inference engine.
 ///
-/// Production initialization accepts only an explicit tokenizer folder and the
-/// byte-for-byte verified production safetensors artifact. It performs no model
-/// lookup, network access, HTTP serving, or unbounded/concurrent batching.
+/// The engine owns what every model shares: input validation, planning every
+/// row before inference, bounded microbatch fan-out, cancellation, and answer
+/// assembly. A `DecisionBackend` supplies prompt packing, the network, and
+/// calibration. It performs no model lookup, network access, or HTTP serving.
 public actor SystemOneEngine {
-    public static let modelID = "von-1.1.0"
-    public static let defaultModelAlias = "von-latest"
     public static let defaultChoiceInstructions = "Which option best describes the state?"
     public static let defaultScoreInstructions = "Rate where the state falls on this scale:"
 
-    private let tokenizer: VonTokenizer
-    private let model: VonOptionMarkerModel?
-    private let injectedLogitsProvider: (@Sendable (VonPackedInput) async throws -> [Float])?
-    private let injectedBatchLogitsProvider: (@Sendable ([VonPackedInput]) async throws -> BatchLogitsOutput)?
+    /// The identifier the backend reports in every response.
+    public nonisolated let modelID: String
 
-    /// Loads the local tokenizer and verifies the exact pinned production weights.
-    public init(tokenizerFolder: URL, verifiedWeightsURL: URL) async throws {
-        tokenizer = try await VonTokenizer(modelFolder: tokenizerFolder)
-        let weights = try VonWeights.verifiedProduction(contentsOf: verifiedWeightsURL)
-        model = VonOptionMarkerModel(weights: weights)
-        injectedLogitsProvider = nil
-        injectedBatchLogitsProvider = nil
-    }
+    private let backend: any DecisionBackend
 
-    /// Offline test seam. The provider receives one packed input per sequential forward.
-    init(
-        tokenizer: VonTokenizer,
-        logitsProvider: @escaping @Sendable (VonPackedInput) async throws -> [Float]
-    ) {
-        self.tokenizer = tokenizer
-        model = nil
-        injectedLogitsProvider = logitsProvider
-        injectedBatchLogitsProvider = nil
-    }
-
-    /// Offline batched test seam. Microbatches are issued sequentially in sorted order.
-    init(
-        tokenizer: VonTokenizer,
-        batchLogitsProvider: @escaping @Sendable ([VonPackedInput]) async throws -> BatchLogitsOutput
-    ) {
-        self.tokenizer = tokenizer
-        model = nil
-        injectedLogitsProvider = nil
-        injectedBatchLogitsProvider = batchLogitsProvider
+    /// Wraps a loaded model backend.
+    public init(backend: some DecisionBackend) {
+        self.backend = backend
+        modelID = backend.modelID
     }
 
     /// Evaluates ordered questions with bounded, stable microbatch fan-out.
     public func systemOne(
         _ request: SystemOneRequest,
+        media: SystemOneMedia? = nil,
         batchingStrategy: BatchingStrategy = .automatic
     ) async throws -> SystemOneResponse {
         try validate(request.state)
         try validate(request.questions)
-
-        let stateText = PythonSemantics.formatState(request.state)
-        let stateTokenCount = tokenizer.stateTokenCount(stateText)
-        let plan = try plan(
-            questions: request.questions,
-            stateText: stateText,
-            stateTokenCount: stateTokenCount
-        )
-        let answers: [AnswerEntry]
-        if injectedLogitsProvider != nil {
-            answers = try await executeLegacy(plan)
-        } else {
-            let rowLogits = try await execute(plan.rows, strategy: batchingStrategy)
-            answers = try plan.questions.map { question in
-                AnswerEntry(
-                    id: question.id,
-                    answer: try answer(for: question, rowLogits: rowLogits)
-                )
-            }
-        }
-
-        let stateCharacters = PythonSemantics.characterCount(stateText)
-        let usage = Usage(
-            inputTokens: max(1, stateCharacters / 4) + max(1, plan.instructionCharacters / 4),
-            outputTokens: answers.count
-        )
-        return SystemOneResponse(model: Self.modelID, answers: answers, usage: usage)
+        return try await run(backend, request: request, media: media, strategy: batchingStrategy)
     }
 
     /// Convenience form of `systemOne` retaining explicit question order.
     public func systemOne(
         state: SystemOneState,
         questions: [QuestionEntry],
-        model: String = SystemOneEngine.defaultModelAlias,
+        media: SystemOneMedia? = nil,
+        model: String? = nil,
         batchingStrategy: BatchingStrategy = .automatic
     ) async throws -> SystemOneResponse {
         try await systemOne(
-            SystemOneRequest(model: model, state: state, questions: questions),
+            SystemOneRequest(model: model ?? modelID, state: state, questions: questions),
+            media: media,
             batchingStrategy: batchingStrategy
         )
     }
@@ -191,22 +120,17 @@ public actor SystemOneEngine {
         state: SystemOneState,
         choices: [ChoiceOption],
         instructions: String = SystemOneEngine.defaultChoiceInstructions,
-        model: String = SystemOneEngine.defaultModelAlias
+        media: SystemOneMedia? = nil,
+        model: String? = nil
     ) async throws -> ChoiceAnswer {
-        let response = try await systemOne(
-            state: state,
-            questions: [
-                QuestionEntry(
-                    id: "decision",
-                    question: .choice(Choice(instructions: instructions, criteria: choices))
-                ),
-            ],
-            model: model
+        let answer = try await single(
+            .choice(Choice(instructions: instructions, criteria: choices)),
+            id: "decision", state: state, media: media, model: model
         )
-        guard case .choice(let answer)? = response["decision"] else {
+        guard case .choice(let choice) = answer else {
             preconditionFailure("SystemOneEngine produced a mismatched decision answer")
         }
-        return answer
+        return choice
     }
 
     /// Evaluates a yes/no condition and returns the probability that it is true.
@@ -214,22 +138,17 @@ public actor SystemOneEngine {
         state: SystemOneState,
         instructions: String,
         criteria: NoulCriteria? = nil,
-        model: String = SystemOneEngine.defaultModelAlias
+        media: SystemOneMedia? = nil,
+        model: String? = nil
     ) async throws -> Double {
-        let response = try await systemOne(
-            state: state,
-            questions: [
-                QuestionEntry(
-                    id: "judgment",
-                    question: .noul(Noul(instructions: instructions, criteria: criteria))
-                ),
-            ],
-            model: model
+        let answer = try await single(
+            .noul(Noul(instructions: instructions, criteria: criteria)),
+            id: "judgment", state: state, media: media, model: model
         )
-        guard case .noul(let answer)? = response["judgment"] else {
+        guard case .noul(let noul) = answer else {
             preconditionFailure("SystemOneEngine produced a mismatched judgment answer")
         }
-        return answer.noul
+        return noul.noul
     }
 
     /// Rates state over ordered ordinal levels.
@@ -237,22 +156,17 @@ public actor SystemOneEngine {
         state: SystemOneState,
         criteria: [ScoreLevel],
         instructions: String = SystemOneEngine.defaultScoreInstructions,
-        model: String = SystemOneEngine.defaultModelAlias
+        media: SystemOneMedia? = nil,
+        model: String? = nil
     ) async throws -> ScoreAnswer {
-        let response = try await systemOne(
-            state: state,
-            questions: [
-                QuestionEntry(
-                    id: "rating",
-                    question: .score(Score(instructions: instructions, criteria: criteria))
-                ),
-            ],
-            model: model
+        let answer = try await single(
+            .score(Score(instructions: instructions, criteria: criteria)),
+            id: "rating", state: state, media: media, model: model
         )
-        guard case .score(let answer)? = response["rating"] else {
+        guard case .score(let score) = answer else {
             preconditionFailure("SystemOneEngine produced a mismatched rating answer")
         }
-        return answer
+        return score
     }
 }
 
@@ -354,163 +268,70 @@ extension SystemOneEngine {
 }
 
 private extension SystemOneEngine {
-    typealias InferencePlan = (
-        rows: [VonPlannedInferenceRow],
-        questions: [VonPlannedQuestion],
-        instructionCharacters: Int
-    )
-
-    func plan(
-        questions: [QuestionEntry],
-        stateText: String,
-        stateTokenCount: Int
-    ) throws -> InferencePlan {
-        var rows: [VonPlannedInferenceRow] = []
-        var plannedQuestions: [VonPlannedQuestion] = []
-        var instructionCharacters = 0
-        rows.reserveCapacity(questions.count)
-        plannedQuestions.reserveCapacity(questions.count)
-
-        for entry in questions {
-            let options: [String]
-            let instructions: String
-            let needsNullRow: Bool
-            let plannedAnswer: VonPlannedAnswer
-            switch entry.question {
-            case .choice(let question):
-                options = PythonSemantics.renderChoiceOptions(question.criteria)
-                instructions = question.instructions
-                needsNullRow = false
-                plannedAnswer = .choice(keys: question.criteria.map(\.key))
-            case .noul(let question):
-                let rendered = PythonSemantics.renderNoulCriteria(question.criteria)
-                options = rendered.descriptions
-                instructions = question.instructions
-                needsNullRow = !rendered.hasExplicitCriteria
-                plannedAnswer = .noul
-            case .score(let question):
-                let rendered = PythonSemantics.renderScoreLevels(question.criteria)
-                options = rendered
-                instructions = question.instructions
-                needsNullRow = false
-                plannedAnswer = .score(descriptions: rendered)
-            }
-
-            let primaryRowIndex = rows.count
-            rows.append(try plannedRow(state: stateText, question: instructions, options: options))
-            let nullRowIndex: Int?
-            if needsNullRow {
-                nullRowIndex = rows.count
-                rows.append(try plannedRow(state: "", question: instructions, options: options))
-            } else {
-                nullRowIndex = nil
-            }
-            plannedQuestions.append(VonPlannedQuestion(
-                id: entry.id,
-                answer: plannedAnswer,
-                primaryRowIndex: primaryRowIndex,
-                nullRowIndex: nullRowIndex,
-                stateTokenCount: stateTokenCount
-            ))
-            instructionCharacters += PythonSemantics.characterCount(instructions)
-        }
-        return (rows, plannedQuestions, instructionCharacters)
-    }
-
-    func plannedRow(
-        state: String,
-        question: String,
-        options: [String]
-    ) throws -> VonPlannedInferenceRow {
-        let packed = tokenizer.packedInput(state: state, question: question, options: options)
-        guard packed.maskPositions.count == options.count else {
-            throw SystemOneEngineError.unexpectedMaskCount(
-                expected: options.count,
-                actual: packed.maskPositions.count
-            )
-        }
-        return VonPlannedInferenceRow(input: packed, expectedLogitCount: options.count)
-    }
-
-    func executeLegacy(_ plan: InferencePlan) async throws -> [AnswerEntry] {
-        guard let injectedLogitsProvider else {
-            preconditionFailure("SystemOneEngine has no legacy logits provider")
-        }
-        var rowLogits = [[Float]](repeating: [], count: plan.rows.count)
-        var answers: [AnswerEntry] = []
-        answers.reserveCapacity(plan.questions.count)
-
-        for question in plan.questions {
-            let rowIndices = [question.primaryRowIndex]
-                + (question.nullRowIndex.map { [$0] } ?? [])
-            for rowIndex in rowIndices {
-                let row = plan.rows[rowIndex]
-                try Task.checkCancellation()
-                let logits = try await injectedLogitsProvider(row.input)
-                guard logits.count == row.expectedLogitCount else {
-                    throw SystemOneEngineError.unexpectedLogitCount(
-                        expected: row.expectedLogitCount,
-                        actual: logits.count
-                    )
-                }
-                rowLogits[rowIndex] = logits
-            }
-            answers.append(AnswerEntry(
-                id: question.id,
-                answer: try answer(for: question, rowLogits: rowLogits)
-            ))
-        }
-        return answers
-    }
-
-    func execute(
-        _ rows: [VonPlannedInferenceRow],
-        strategy: BatchingStrategy
-    ) async throws -> [[Float]] {
-        guard !rows.isEmpty else { return [] }
-        let batches = Self.microbatchIndices(
-            sequenceLengths: rows.map { $0.input.inputIDs.count },
-            maxAmplification: strategy.maxAmplification
+    func single(
+        _ question: Question,
+        id: String,
+        state: SystemOneState,
+        media: SystemOneMedia?,
+        model: String?
+    ) async throws -> Answer {
+        let response = try await systemOne(
+            state: state,
+            questions: [QuestionEntry(id: id, question: question)],
+            media: media,
+            model: model
         )
-        var scattered = [[Float]?](repeating: nil, count: rows.count)
-        for indices in batches {
-            let chunk = indices.map { rows[$0] }
-            let inputs = chunk.map(\.input)
-            let output: BatchLogitsOutput
-            if let injectedBatchLogitsProvider {
-                try Task.checkCancellation()
-                output = try await injectedBatchLogitsProvider(inputs)
-            } else {
-                guard let model else { preconditionFailure("SystemOneEngine has no logits provider") }
-                try Task.checkCancellation()
-                let modelOutput = try model.forward(inputs)
-                eval(modelOutput.logits)
-                output = BatchLogitsOutput(
-                    logits: modelOutput.logits.asArray(Float.self),
-                    rowOffsets: modelOutput.rowOffsets
-                )
-            }
-            let batchLogits = try separate(output, for: chunk)
-            for (index, logits) in zip(indices, batchLogits) {
-                scattered[index] = logits
-            }
+        guard let answer = response[id] else {
+            preconditionFailure("SystemOneEngine dropped answer \(id)")
         }
-        return scattered.map { logits in
-            guard let logits else {
-                preconditionFailure("SystemOneEngine failed to populate a planned inference row")
-            }
-            return logits
-        }
+        return answer
     }
 
-    func separate(
-        _ output: BatchLogitsOutput,
-        for rows: [VonPlannedInferenceRow]
-    ) throws -> [[Float]] {
+    /// Opens the existential so planning and execution share one concrete `Row`.
+    ///
+    /// Decisions resolve in plan order as soon as all of their rows have run,
+    /// so a postprocessing failure stops inference before later microbatches.
+    func run<Backend: DecisionBackend>(
+        _ backend: Backend,
+        request: SystemOneRequest,
+        media: SystemOneMedia?,
+        strategy: BatchingStrategy
+    ) async throws -> SystemOneResponse {
+        let plan = try backend.plan(request, media: media)
+        var rowLogits = [[Float]?](repeating: nil, count: plan.rows.count)
+        var answers: [AnswerEntry] = []
+        answers.reserveCapacity(plan.decisions.count)
+
+        func resolveReadyDecisions() throws {
+            while answers.count < plan.decisions.count {
+                let decision = plan.decisions[answers.count]
+                let logits = decision.rowIndices.compactMap { rowLogits[$0] }
+                guard logits.count == decision.rowIndices.count else { return }
+                answers.append(AnswerEntry(id: decision.id, answer: try decision.resolve(logits)))
+            }
+        }
+
+        try resolveReadyDecisions()
+        for indices in backend.microbatches(for: plan.rows, strategy: strategy) {
+            let chunk = indices.map { plan.rows[$0] }
+            try Task.checkCancellation()
+            let output = try await backend.logits(for: chunk)
+            for (index, logits) in zip(indices, try separate(output, logitCounts: chunk.map(\.logitCount))) {
+                rowLogits[index] = logits
+            }
+            try resolveReadyDecisions()
+        }
+        guard answers.count == plan.decisions.count else {
+            preconditionFailure("SystemOneEngine failed to populate a planned inference row")
+        }
+        return SystemOneResponse(model: backend.modelID, answers: answers, usage: plan.usage)
+    }
+
+    func separate(_ output: BatchLogitsOutput, logitCounts: [Int]) throws -> [[Float]] {
         var expectedOffsets = [0]
-        expectedOffsets.reserveCapacity(rows.count + 1)
-        for row in rows {
-            let (offset, overflow) = expectedOffsets.last!.addingReportingOverflow(row.expectedLogitCount)
+        expectedOffsets.reserveCapacity(logitCounts.count + 1)
+        for count in logitCounts {
+            let (offset, overflow) = expectedOffsets.last!.addingReportingOverflow(count)
             guard !overflow else {
                 throw SystemOneEngineError.unexpectedLogitCount(expected: Int.max, actual: output.logits.count)
             }
@@ -529,53 +350,8 @@ private extension SystemOneEngine {
                 actual: output.logits.count
             )
         }
-        return rows.indices.map { index in
+        return logitCounts.indices.map { index in
             Array(output.logits[expectedOffsets[index]..<expectedOffsets[index + 1]])
-        }
-    }
-
-    func answer(
-        for planned: VonPlannedQuestion,
-        rowLogits: [[Float]]
-    ) throws -> Answer {
-        let logits = rowLogits[planned.primaryRowIndex]
-        switch planned.answer {
-        case .choice(let keys):
-            let result = try VonDecisionMath.choice(
-                logits: logits,
-                stateTokenCount: planned.stateTokenCount
-            )
-            return .choice(ChoiceAnswer(
-                choice: keys[result.selectedIndex],
-                probabilities: zip(keys, result.roundedProbabilities).map {
-                    ProbabilityEntry(key: $0.0, probability: $0.1)
-                },
-                confidence: result.confidence
-            ))
-        case .noul:
-            let nullLogits = planned.nullRowIndex.map { rowLogits[$0] }
-            let result = try VonDecisionMath.noul(
-                logits: logits,
-                nullLogits: nullLogits,
-                stateTokenCount: planned.stateTokenCount
-            )
-            return .noul(NoulAnswer(noul: result.probabilityTrue))
-        case .score(let descriptions):
-            let result = try VonDecisionMath.score(
-                logits: logits,
-                stateTokenCount: planned.stateTokenCount
-            )
-            let keys = descriptions.indices.map(String.init)
-            return .score(ScoreAnswer(
-                score: result.score,
-                confidence: result.confidence,
-                legend: zip(keys, descriptions).map {
-                    LegendEntry(key: $0.0, description: $0.1)
-                },
-                probabilities: zip(keys, result.roundedProbabilities).map {
-                    ProbabilityEntry(key: $0.0, probability: $0.1)
-                }
-            ))
         }
     }
 

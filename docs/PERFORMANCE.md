@@ -156,14 +156,14 @@ executable (the Metal library is not packaged by plain `swift run`):
 
 ```bash
 xcodebuild build \
-  -scheme von-benchmark \
+  -scheme SystemOneBenchmark \
   -destination 'platform=macOS,arch=arm64' \
   -configuration Release \
   -derivedDataPath "$PWD/.build/xcode-release"
 
 # Heterogeneous benchmark (30 iterations, 3 warmup)
-.build/xcode-release/Build/Products/Release/von-benchmark \
-  --tokenizer Tests/VonSwiftTests/Resources/Tokenizer \
+.build/xcode-release/Build/Products/Release/SystemOneBenchmark \
+  --tokenizer Tests/SystemOneVonTests/Resources/Tokenizer \
   --weights weights/option_marker.safetensors \
   --device gpu --strategy automatic --workload fixture \
   --iterations 30 --warmup 3

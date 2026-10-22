@@ -43,7 +43,7 @@ fi
 echo "Port $python_port is clear; no listener/orphan found." >&2
 
 : "${VON_PRODUCTION_WEIGHTS_PATH:=$repo_root/weights/option_marker.safetensors}"
-: "${VON_TOKENIZER_PATH:=$repo_root/Tests/VonSwiftTests/Resources/Tokenizer}"
+: "${VON_TOKENIZER_PATH:=$repo_root/Tests/SystemOneVonTests/Resources/Tokenizer}"
 : "${VON_API_KEY:=von-http-parity-local}"
 [[ -f "$VON_PRODUCTION_WEIGHTS_PATH" ]] || { echo "missing weights: $VON_PRODUCTION_WEIGHTS_PATH" >&2; exit 2; }
 [[ -f "$VON_TOKENIZER_PATH/tokenizer.json" ]] || { echo "missing tokenizer resources: $VON_TOKENIZER_PATH" >&2; exit 2; }
@@ -86,11 +86,11 @@ if [[ "$healthy" != "1" ]]; then
 fi
 
 xcodebuild build-for-testing \
-  -scheme VonSwift-Package \
+  -scheme SystemOne-Package \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$repo_root/.build/xcode"
 
-default_bundle="$repo_root/.build/xcode/Build/Products/Debug/VonHTTPTests.xctest"
+default_bundle="$repo_root/.build/xcode/Build/Products/Debug/SystemOneHTTPTests.xctest"
 bundle="${VON_HTTP_XCTEST_BUNDLE:-$default_bundle}"
 [[ -d "$bundle" ]] || { echo "missing Xcode test bundle: $bundle" >&2; exit 1; }
 
@@ -100,7 +100,7 @@ VON_API_KEY="$VON_API_KEY" \
 VON_PRODUCTION_WEIGHTS_PATH="$VON_PRODUCTION_WEIGHTS_PATH" \
 VON_TOKENIZER_PATH="$VON_TOKENIZER_PATH" \
   xcrun xctest \
-    -XCTest VonHTTPTests.PythonServerParityTests/testPinnedPythonServerParityWhenConfigured \
+    -XCTest SystemOneHTTPTests.PythonServerParityTests/testPinnedPythonServerParityWhenConfigured \
     "$bundle"
 
 echo "HTTP parity passed; Python log: $python_log" >&2

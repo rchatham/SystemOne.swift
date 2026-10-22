@@ -40,7 +40,7 @@ and inference timings, and process/MLX memory.
    run it a few times for a steady latency.
 
 The tokenizer is bundled directly from
-`Tests/SystemOneTests/Resources/Tokenizer`, so it always matches the pinned
+`Tests/SystemOneVonTests/Resources/Tokenizer`, so it always matches the pinned
 revision the tests use.
 
 ## Memory

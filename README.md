@@ -66,7 +66,7 @@ committed.
 
 The exact Apache-2.0 `wfzyx/von` tokenizer files are checked in as Swift test
 resources with revision and SHA-256 provenance in
-`Tests/VonSwiftTests/Resources/Tokenizer/source.json`. Runtime tokenization
+`Tests/SystemOneVonTests/Resources/Tokenizer/source.json`. Runtime tokenization
 loads only an explicitly supplied local folder and has no model-name/network
 API.
 
@@ -115,10 +115,10 @@ never defaults to the workspace-assigned port 8000):
 ```bash
 VON_API_KEY='replace-me' \
 VON_CORS_ORIGINS='https://app.example,https://admin.example' \
-  swift run von serve \
+  swift run systemone serve \
     --host 127.0.0.1 \
     --port 8015 \
-    --tokenizer Tests/VonSwiftTests/Resources/Tokenizer \
+    --tokenizer Tests/SystemOneVonTests/Resources/Tokenizer \
     --weights weights/option_marker.safetensors
 ```
 
@@ -203,24 +203,24 @@ For CPU/GPU public-API parity, use Xcode's Metal-enabled test bundle (the plain
 SwiftPM test bundle lacks the Metal library):
 
 ```bash
-xcodebuild build-for-testing -scheme VonSwift-Package -destination 'platform=macOS,arch=arm64' \
+xcodebuild build-for-testing -scheme SystemOne-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 VON_PUBLIC_API_PARITY=1 VON_PUBLIC_API_DEVICE=cpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
-  xcrun xctest -XCTest VonSwiftTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
-  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+  xcrun xctest -XCTest SystemOneVonTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/SystemOneVonTests.xctest"
 # Repeat with VON_PUBLIC_API_DEVICE=gpu.
 ```
 
 For lower-level CPU/GPU scorer, composed-model, and decision parity:
 
 ```bash
-xcodebuild build-for-testing -scheme VonSwift-Package -destination 'platform=macOS,arch=arm64' \
+xcodebuild build-for-testing -scheme SystemOne-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 VON_OPTION_MARKER_PARITY=1 VON_OPTION_MARKER_DEVICE=cpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
-  xcrun xctest -XCTest VonSwiftTests.VonOptionMarkerModelTests/testProductionScorerAndComposedParityWhenConfigured \
-  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+  xcrun xctest -XCTest SystemOneVonTests.VonOptionMarkerModelTests/testProductionScorerAndComposedParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/SystemOneVonTests.xctest"
 # Repeat with VON_OPTION_MARKER_DEVICE=gpu.
 ```
 

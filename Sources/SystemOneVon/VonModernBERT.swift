@@ -1,6 +1,7 @@
 import Foundation
 import MLX
 import MLXNN
+import SystemOne
 
 /// Errors raised before a ModernBERT forward is constructed.
 public enum VonModernBERTError: Error, Equatable, Sendable {
@@ -83,20 +84,20 @@ public final class VonModernBERT {
     /// Copies validated encoder tensors into MLX-owned arrays.
     public init(encoderWeights: VonEncoderWeights) {
         tokenEmbedding = Embedding(
-            weight: Self.copyToMLX(encoderWeights.embeddings.tokenEmbedding)
+            weight: encoderWeights.embeddings.tokenEmbedding.mlxArray()
         )
-        embeddingNorm = Self.copyToMLX(encoderWeights.embeddings.norm)
+        embeddingNorm = encoderWeights.embeddings.norm.mlxArray()
         layers = encoderWeights.layers.map { weights in
             EncoderLayer(
-                attentionNorm: weights.attentionNorm.map(Self.copyToMLX),
-                queryKeyValue: Linear(weight: Self.copyToMLX(weights.attention.queryKeyValue)),
-                attentionOutput: Linear(weight: Self.copyToMLX(weights.attention.output)),
-                mlpNorm: Self.copyToMLX(weights.mlp.norm),
-                mlpInput: Linear(weight: Self.copyToMLX(weights.mlp.input)),
-                mlpOutput: Linear(weight: Self.copyToMLX(weights.mlp.output))
+                attentionNorm: weights.attentionNorm.map { $0.mlxArray() },
+                queryKeyValue: Linear(weight: weights.attention.queryKeyValue.mlxArray()),
+                attentionOutput: Linear(weight: weights.attention.output.mlxArray()),
+                mlpNorm: weights.mlp.norm.mlxArray(),
+                mlpInput: Linear(weight: weights.mlp.input.mlxArray()),
+                mlpOutput: Linear(weight: weights.mlp.output.mlxArray())
             )
         }
-        finalNorm = Self.copyToMLX(encoderWeights.finalNorm)
+        finalNorm = encoderWeights.finalNorm.mlxArray()
     }
 
     /// Runs one unpadded sequence and returns a batched `[1, length, 1024]` result.
@@ -372,14 +373,6 @@ extension VonModernBERT {
         return mask
     }
 
-    private static func copyToMLX(_ tensor: SafetensorsTensorView) -> MLXArray {
-        tensor.withUnsafeBytes { bytes in
-            // Make ownership explicit rather than letting an MLX array retain a
-            // pointer into the read-only safetensors mmap.
-            let copiedBytes = Data(bytes: bytes.baseAddress!, count: bytes.count)
-            return MLXArray(copiedBytes, tensor.descriptor.shape, dtype: .float32)
-        }
-    }
 }
 
 private extension VonModernBERT {

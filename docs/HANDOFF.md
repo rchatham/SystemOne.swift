@@ -79,7 +79,7 @@ the empty-state clamp to one), exact `pack_sequence`, and packed text/ids/
 attention masks/mask positions.
 
 The exact pinned `tokenizer.json` and `tokenizer_config.json` are test resources
-under `Tests/VonSwiftTests/Resources/Tokenizer/`. `source.json` records the
+under `Tests/SystemOneVonTests/Resources/Tokenizer/`. `source.json` records the
 `wfzyx/von` revision, Apache-2.0 license, and hashes; `LICENSE.md` carries the
 license. Swift parity tests cover all five golden forwards (including the
 541-token Unicode input), all four state counts, whitespace, `[MASK]` lstrip,
@@ -220,12 +220,12 @@ port 8000. Example:
 
 ```bash
 VON_API_KEY=replace-me VON_CORS_ORIGINS=https://app.example \
-  swift run von serve --host 127.0.0.1 --port 8015 \
-  --tokenizer Tests/VonSwiftTests/Resources/Tokenizer \
+  swift run systemone serve --host 127.0.0.1 --port 8015 \
+  --tokenizer Tests/SystemOneVonTests/Resources/Tokenizer \
   --weights weights/option_marker.safetensors
 ```
 
-`Tests/VonHTTPTests/PythonServerParityTests.swift` is opt-in with
+`Tests/SystemOneHTTPTests/PythonServerParityTests.swift` is opt-in with
 `VON_HTTP_PARITY=1`, an external loopback `VON_PYTHON_SERVER_URL`, production
 weights, tokenizer resources, and a shared API key. It starts only Swift on
 `127.0.0.1:0`. `tools/run_http_parity.sh` safely supplies the external pinned
@@ -266,12 +266,12 @@ the isolated scorer, composed raw logits, calibrated probabilities, and rounded
 answers; run it once with each device:
 
 ```bash
-xcodebuild build-for-testing -scheme VonSwift-Package -destination 'platform=macOS,arch=arm64' \
+xcodebuild build-for-testing -scheme SystemOne-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 VON_OPTION_MARKER_PARITY=1 VON_OPTION_MARKER_DEVICE=cpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
-  xcrun xctest -XCTest VonSwiftTests.VonOptionMarkerModelTests/testProductionScorerAndComposedParityWhenConfigured \
-  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+  xcrun xctest -XCTest SystemOneVonTests.VonOptionMarkerModelTests/testProductionScorerAndComposedParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/SystemOneVonTests.xctest"
 # Repeat with VON_OPTION_MARKER_DEVICE=gpu.
 ```
 
@@ -280,8 +280,8 @@ Run public API parity once per device:
 ```bash
 VON_PUBLIC_API_PARITY=1 VON_PUBLIC_API_DEVICE=cpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
-  xcrun xctest -XCTest VonSwiftTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
-  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+  xcrun xctest -XCTest SystemOneVonTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/SystemOneVonTests.xctest"
 # Repeat with VON_PUBLIC_API_DEVICE=gpu.
 ```
 
@@ -289,12 +289,12 @@ The Phase 4 backbone-only parity command remains available (set device to
 `cpu` for the CPU oracle comparison):
 
 ```bash
-xcodebuild build-for-testing -scheme VonSwift-Package -destination 'platform=macOS,arch=arm64' \
+xcodebuild build-for-testing -scheme SystemOne-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 VON_MODERNBERT_PARITY=1 VON_MODERNBERT_DEVICE=gpu \
   VON_PRODUCTION_WEIGHTS_PATH="$PWD/weights/option_marker.safetensors" \
-  xcrun xctest -XCTest VonSwiftTests.VonModernBERTTests/testProductionBackboneParityWhenConfigured \
-  "$PWD/.build/xcode/Build/Products/Debug/VonSwiftTests.xctest"
+  xcrun xctest -XCTest SystemOneVonTests.VonModernBERTTests/testProductionBackboneParityWhenConfigured \
+  "$PWD/.build/xcode/Build/Products/Debug/SystemOneVonTests.xctest"
 ```
 
 The default Swift tests use checked-in resources and require no model cache or

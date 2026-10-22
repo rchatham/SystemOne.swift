@@ -29,8 +29,7 @@ final class PythonServerParityTests: XCTestCase {
         let pythonHealth = try await request(pythonBaseURL.appendingPathComponent("health"))
         XCTAssertEqual(pythonHealth.status, 200, "The external pinned Python server is not healthy")
 
-        let engine = try await SystemOneEngine(
-            tokenizerFolder: tokenizerURL, verifiedWeightsURL: weightsURL)
+        let engine = try await SystemOneEngine.von(tokenizerFolder: tokenizerURL, verifiedWeightsURL: weightsURL)
         let swiftServer = SystemOneHTTPServer(
             configuration: .init(
                 host: "127.0.0.1",
@@ -179,7 +178,7 @@ final class PythonServerParityTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let resource = repository.appendingPathComponent("Tests/SystemOneTests/Resources/Tokenizer")
+        let resource = repository.appendingPathComponent("Tests/SystemOneVonTests/Resources/Tokenizer")
         guard
             FileManager.default.fileExists(
                 atPath: resource.appendingPathComponent("tokenizer.json").path)

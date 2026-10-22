@@ -165,7 +165,7 @@ final class TypesTests: XCTestCase {
         )
         assertDuplicateEncoding(
             SystemOneResponse(
-                model: SystemOneEngine.modelID,
+                model: "test-model",
                 answers: [
                     AnswerEntry(id: "dup", answer: .noul(NoulAnswer(noul: 0.4))),
                     AnswerEntry(id: "dup", answer: .noul(NoulAnswer(noul: 0.6))),

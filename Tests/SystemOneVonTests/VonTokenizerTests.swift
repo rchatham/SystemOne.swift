@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import XCTest
 @testable import SystemOne
+@testable import SystemOneVon
 
 final class VonTokenizerTests: XCTestCase {
     func testGoldenPackedInputsAndStateCounts() async throws {

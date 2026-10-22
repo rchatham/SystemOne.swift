@@ -1,9 +1,19 @@
 import Darwin
 import Foundation
 
-/// The tensor element types supported by the Phase 3 loader.
+/// The tensor element types the loader accepts. Models compute in float32;
+/// `I64` appears only for bookkeeping tensors such as BatchNorm counters.
 public enum SafetensorsDataType: String, Sendable {
     case float32 = "F32"
+    case int64 = "I64"
+
+    /// Bytes per element.
+    public var byteWidth: Int {
+        switch self {
+        case .float32: return 4
+        case .int64: return 8
+        }
+    }
 }
 
 /// A validated tensor entry from a safetensors header.
@@ -395,7 +405,7 @@ private struct SafetensorsHeader {
         guard let dataType = SafetensorsDataType(rawValue: dataTypeName) else {
             throw SafetensorsError.invalidDescriptor(
                 name: name,
-                reason: "unsupported dtype \(dataTypeName); Phase 3 supports only F32"
+                reason: "unsupported dtype \(dataTypeName); expected F32 or I64"
             )
         }
 
@@ -414,9 +424,9 @@ private struct SafetensorsHeader {
             }
             elementCount = product
         }
-        let (byteCount, byteOverflow) = elementCount.multipliedReportingOverflow(by: 4)
+        let (byteCount, byteOverflow) = elementCount.multipliedReportingOverflow(by: dataType.byteWidth)
         guard !byteOverflow else {
-            throw SafetensorsError.invalidDescriptor(name: name, reason: "F32 byte count overflows Int")
+            throw SafetensorsError.invalidDescriptor(name: name, reason: "\(dataTypeName) byte count overflows Int")
         }
 
         guard case .array(let offsetValues)? = fields["data_offsets"], offsetValues.count == 2 else {

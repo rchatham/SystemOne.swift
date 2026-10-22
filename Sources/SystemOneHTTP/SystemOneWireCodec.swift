@@ -1,6 +1,7 @@
 import Foundation
 import JSON
 import SystemOne
+import SystemOneVon
 
 /// Failures while adapting metadata-free Python Von HTTP JSON to Swift types.
 public enum SystemOneWireCodecError: Error, Equatable, Sendable {
@@ -404,7 +405,7 @@ public struct SystemOneWireCodec: Sendable {
             return AnswerEntry(id: entry.id, answer: answer)
         }
         let response = SystemOneResponse(
-            model: SystemOneEngine.modelID,
+            model: VonBackend.modelID,
             answers: answers,
             usage: Usage(inputTokens: Int.max, outputTokens: Int.max)
         )

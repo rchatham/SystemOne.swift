@@ -3,6 +3,7 @@ import MLX
 import Observation
 import os
 import SystemOne
+import SystemOneVon
 
 /// Owns the on-device `SystemOneEngine` and the harness's load/run state.
 @MainActor
@@ -96,7 +97,7 @@ final class HarnessModel {
         let start = ContinuousClock.now
         do {
             let engine = try await Task.detached(priority: .userInitiated) {
-                try await SystemOneEngine(tokenizerFolder: tokenizerFolder, verifiedWeightsURL: weightsURL)
+                try await SystemOneEngine.von(tokenizerFolder: tokenizerFolder, verifiedWeightsURL: weightsURL)
             }.value
             self.engine = engine
             record("Load (verify + copy)", since: start)
@@ -112,7 +113,7 @@ final class HarnessModel {
         guard let engine else { return }
         phase = .running
         let request = SystemOneRequest(
-            model: SystemOneEngine.modelID,
+            model: VonBackend.modelID,
             state: .text(state),
             questions: HarnessSample.questions
         )

@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SystemOne
+@testable import SystemOneVon
 
 final class VonDecisionMathTests: XCTestCase {
     func testGoldenCalibrationAndDecisionsForAllFourCasesAndFiveForwards() throws {

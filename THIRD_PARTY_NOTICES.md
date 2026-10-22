@@ -17,9 +17,9 @@ VonSwift ports the "System One" decision model from the
 - Model: https://huggingface.co/wfzyx/von
 
 The tokenizer `tokenizer.json` and `tokenizer_config.json` checked in under
-`Tests/VonSwiftTests/Resources/Tokenizer/` are redistributed from the same
+`Tests/SystemOneVonTests/Resources/Tokenizer/` are redistributed from the same
 `wfzyx/von` checkpoint under its Apache License 2.0. Provenance and SHA-256
-hashes are recorded in `Tests/VonSwiftTests/Resources/Tokenizer/source.json`.
+hashes are recorded in `Tests/SystemOneVonTests/Resources/Tokenizer/source.json`.
 
 The converted `option_marker.safetensors` inference weights are intentionally
 not committed. They are derived from the Apache-2.0 `option_marker.pt`

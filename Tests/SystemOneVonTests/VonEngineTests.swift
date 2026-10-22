@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import XCTest
 @testable import SystemOne
+@testable import SystemOneVon
 
 final class VonEngineTests: XCTestCase {
     func testPublicAPIMatchesFourGoldenCasesInFiveSequentialForwards() async throws {
@@ -21,7 +22,7 @@ final class VonEngineTests: XCTestCase {
             state: .text(fixture.cases[0].state),
             questions: [questions[0]]
         )
-        XCTAssertEqual(response.model, SystemOneEngine.modelID)
+        XCTAssertEqual(response.model, VonBackend.modelID)
         try assertAnswer(response.answers[0].answer, matches: fixture.cases[0].answerJSON)
 
         // The remaining cases have different states and exercise the convenience
@@ -524,7 +525,7 @@ final class VonEngineTests: XCTestCase {
         let request = fixture.heterogeneousRequest
 
         XCTAssertEqual(fixture.schemaVersion, 1)
-        XCTAssertEqual(request.model, SystemOneEngine.modelID)
+        XCTAssertEqual(request.model, VonBackend.modelID)
         XCTAssertEqual(request.questions.map(\.id), request.questionIDs)
         XCTAssertEqual(request.answers.map(\.questionID), request.questionIDs)
         XCTAssertEqual(request.usage, Usage(inputTokens: 82, outputTokens: 4))
@@ -754,8 +755,7 @@ final class VonEngineTests: XCTestCase {
         let batchFixture = try loadBatchFixture()
 
         try await Device.withDefaultDevice(device) {
-            let engine = try await SystemOneEngine(
-                tokenizerFolder: tokenizerResourceURL(),
+            let engine = try await SystemOneEngine.von(tokenizerFolder: tokenizerResourceURL(),
                 verifiedWeightsURL: URL(fileURLWithPath: weightsPath)
             )
 

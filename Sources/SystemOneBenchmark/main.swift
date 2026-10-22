@@ -3,6 +3,7 @@ import Dispatch
 import Foundation
 import MLX
 import SystemOne
+import SystemOneVon
 
 // MARK: - CLI
 
@@ -265,7 +266,7 @@ private func runBenchmark(
     // Warmup
     for _ in 0..<warmup {
         _ = try await engine.systemOne(
-            SystemOneRequest(model: SystemOneEngine.modelID, state: .text(workload.state), questions: workload.questions),
+            SystemOneRequest(model: VonBackend.modelID, state: .text(workload.state), questions: workload.questions),
             batchingStrategy: strategy
         )
     }
@@ -277,7 +278,7 @@ private func runBenchmark(
     for _ in 0..<iterations {
         let start = DispatchTime.now().uptimeNanoseconds
         _ = try await engine.systemOne(
-            SystemOneRequest(model: SystemOneEngine.modelID, state: .text(workload.state), questions: workload.questions),
+            SystemOneRequest(model: VonBackend.modelID, state: .text(workload.state), questions: workload.questions),
             batchingStrategy: strategy
         )
         eval(MLXArray(0))
@@ -414,8 +415,7 @@ private func run() async throws {
     }
 
     try await Device.withDefaultDevice(.init(device)) {
-        let engine = try await SystemOneEngine(
-            tokenizerFolder: tokenizerURL, verifiedWeightsURL: weightsURL)
+        let engine = try await SystemOneEngine.von(tokenizerFolder: tokenizerURL, verifiedWeightsURL: weightsURL)
 
         let wl: Workload
         let wlLabel: String

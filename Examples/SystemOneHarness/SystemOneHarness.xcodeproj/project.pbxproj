@@ -14,6 +14,7 @@
 		A10000000000000000000005 /* Tokenizer in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* Tokenizer */; };
 		A10000000000000000000006 /* SystemOne in Frameworks */ = {isa = PBXBuildFile; productRef = A80000000000000000000001 /* SystemOne */; };
 		A10000000000000000000007 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = A80000000000000000000002 /* MLX */; };
+		A10000000000000000000008 /* SystemOneVon in Frameworks */ = {isa = PBXBuildFile; productRef = A80000000000000000000003 /* SystemOneVon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -21,7 +22,7 @@
 		A20000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A20000000000000000000003 /* HarnessModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessModel.swift; sourceTree = "<group>"; };
 		A20000000000000000000004 /* HarnessSample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessSample.swift; sourceTree = "<group>"; };
-		A20000000000000000000005 /* Tokenizer */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Tokenizer; path = ../../Tests/SystemOneTests/Resources/Tokenizer; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000005 /* Tokenizer */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Tokenizer; path = ../../Tests/SystemOneVonTests/Resources/Tokenizer; sourceTree = SOURCE_ROOT; };
 		A20000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000000000000000000007 /* SystemOneHarness.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SystemOneHarness.entitlements; sourceTree = "<group>"; };
 		A20000000000000000000008 /* SystemOneHarness.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SystemOneHarness.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -34,6 +35,7 @@
 			files = (
 				A10000000000000000000006 /* SystemOne in Frameworks */,
 				A10000000000000000000007 /* MLX in Frameworks */,
+				A10000000000000000000008 /* SystemOneVon in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -89,6 +91,7 @@
 			packageProductDependencies = (
 				A80000000000000000000001 /* SystemOne */,
 				A80000000000000000000002 /* MLX */,
+				A80000000000000000000003 /* SystemOneVon */,
 			);
 			productName = SystemOneHarness;
 			productReference = A20000000000000000000008 /* SystemOneHarness.app */;
@@ -299,6 +302,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A90000000000000000000002 /* XCRemoteSwiftPackageReference "mlx-swift" */;
 			productName = MLX;
+		};
+		A80000000000000000000003 /* SystemOneVon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A90000000000000000000001 /* XCLocalSwiftPackageReference "../.." */;
+			productName = SystemOneVon;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

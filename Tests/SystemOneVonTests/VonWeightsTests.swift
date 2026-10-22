@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import XCTest
 @testable import SystemOne
+@testable import SystemOneVon
 
 final class VonWeightsTests: XCTestCase {
     func testIndependentProductionSchemaHasExactNamesAndShapes() {
@@ -19,7 +20,7 @@ final class VonWeightsTests: XCTestCase {
         )
         XCTAssertEqual(
             VonWeights.expectedSchema,
-            expected.map { VonWeightSpecification(name: $0.name, shape: $0.shape) }
+            expected.map { WeightSpecification(name: $0.name, shape: $0.shape) }
         )
         XCTAssertFalse(expected.contains { $0.name == "encoder.layers.0.attn_norm.weight" })
         for layer in 1...27 {
@@ -93,8 +94,8 @@ final class VonWeightsTests: XCTestCase {
         )
 
         XCTAssertThrowsError(try VonWeights.verifiedProduction(contentsOf: url)) { error in
-            guard let weightsError = error as? VonWeightsError,
-                  case .productionSHA256Mismatch(let expected, let actual) = weightsError
+            guard let weightsError = error as? WeightsError,
+                  case .artifactSHA256Mismatch(let expected, let actual) = weightsError
             else {
                 return XCTFail("Expected production SHA256 mismatch, got \(error)")
             }
@@ -117,8 +118,8 @@ final class VonWeightsTests: XCTestCase {
 
         XCTAssertThrowsError(try VonWeights.verifiedProduction(contentsOf: url)) { error in
             XCTAssertEqual(
-                error as? VonWeightsError,
-                .productionFileSizeMismatch(expected: 1_581_259_300, actual: 0)
+                error as? WeightsError,
+                .artifactSizeMismatch(expected: 1_581_259_300, actual: 0)
             )
         }
     }
@@ -131,7 +132,7 @@ final class VonWeightsTests: XCTestCase {
 
         XCTAssertThrowsError(try VonWeights(safetensors: file)) { error in
             XCTAssertEqual(
-                error as? VonWeightsError,
+                error as? WeightsError,
                 .tensorSetMismatch(
                     missing: [removed.name],
                     unexpected: ["unexpected.weight"]
@@ -153,7 +154,7 @@ final class VonWeightsTests: XCTestCase {
 
         XCTAssertThrowsError(try VonWeights(safetensors: file)) { error in
             XCTAssertEqual(
-                error as? VonWeightsError,
+                error as? WeightsError,
                 .shapeMismatch(
                     name: "scorer.dense.weight",
                     expected: [512, 1_024],

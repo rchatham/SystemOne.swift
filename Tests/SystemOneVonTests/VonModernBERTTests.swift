@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import XCTest
 @testable import SystemOne
+@testable import SystemOneVon
 
 final class VonModernBERTTests: XCTestCase {
     func testFullAttentionScheduleAndQKVShapes() {

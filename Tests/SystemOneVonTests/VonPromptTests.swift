@@ -1,10 +1,11 @@
 import XCTest
 @testable import SystemOne
+@testable import SystemOneVon
 
-final class PythonSemanticsTests: XCTestCase {
+final class VonPromptTests: XCTestCase {
     func testOrderedStateAndPythonCharacterCounting() {
         XCTAssertEqual(
-            PythonSemantics.formatState(.fields([
+            VonPrompt.formatState(.fields([
                 StateField(key: "z", value: "first"),
                 StateField(key: "a", value: "second"),
             ])),
@@ -16,7 +17,7 @@ final class PythonSemanticsTests: XCTestCase {
     }
 
     func testChoiceFallbackMatchesPythonTruthinessBeforeStrip() {
-        let rendered = PythonSemantics.renderChoiceOptions([
+        let rendered = VonPrompt.renderChoiceOptions([
             ChoiceOption(key: "  alpha  ", description: nil),
             ChoiceOption(key: "  beta  ", description: ""),
             ChoiceOption(key: "gamma", description: " \t\n "),
@@ -26,33 +27,33 @@ final class PythonSemanticsTests: XCTestCase {
     }
 
     func testNoulPartialCriteriaAndWhitespaceTruthiness() {
-        let defaults = PythonSemantics.renderNoulCriteria(nil)
+        let defaults = VonPrompt.renderNoulCriteria(nil)
         XCTAssertFalse(defaults.hasExplicitCriteria)
         XCTAssertEqual(defaults.descriptions, [
-            PythonSemantics.defaultTrueDescription,
-            PythonSemantics.defaultFalseDescription,
+            VonPrompt.defaultTrueDescription,
+            VonPrompt.defaultFalseDescription,
         ])
 
-        let empty = PythonSemantics.renderNoulCriteria(NoulCriteria(true: "", false: ""))
+        let empty = VonPrompt.renderNoulCriteria(NoulCriteria(true: "", false: ""))
         XCTAssertFalse(empty.hasExplicitCriteria)
         XCTAssertEqual(empty.descriptions, defaults.descriptions)
 
-        let partialTrue = PythonSemantics.renderNoulCriteria(NoulCriteria(true: "custom"))
+        let partialTrue = VonPrompt.renderNoulCriteria(NoulCriteria(true: "custom"))
         XCTAssertTrue(partialTrue.hasExplicitCriteria)
-        XCTAssertEqual(partialTrue.descriptions, ["custom", PythonSemantics.defaultFalseDescription])
+        XCTAssertEqual(partialTrue.descriptions, ["custom", VonPrompt.defaultFalseDescription])
 
-        let partialFalse = PythonSemantics.renderNoulCriteria(NoulCriteria(false: "custom"))
+        let partialFalse = VonPrompt.renderNoulCriteria(NoulCriteria(false: "custom"))
         XCTAssertTrue(partialFalse.hasExplicitCriteria)
-        XCTAssertEqual(partialFalse.descriptions, [PythonSemantics.defaultTrueDescription, "custom"])
+        XCTAssertEqual(partialFalse.descriptions, [VonPrompt.defaultTrueDescription, "custom"])
 
-        let whitespace = PythonSemantics.renderNoulCriteria(NoulCriteria(true: "   "))
+        let whitespace = VonPrompt.renderNoulCriteria(NoulCriteria(true: "   "))
         XCTAssertTrue(whitespace.hasExplicitCriteria)
-        XCTAssertEqual(whitespace.descriptions, ["   ", PythonSemantics.defaultFalseDescription])
+        XCTAssertEqual(whitespace.descriptions, ["   ", VonPrompt.defaultFalseDescription])
     }
 
     func testScoreLevelRenderingMatchesPython() {
         XCTAssertEqual(
-            PythonSemantics.renderScoreLevels([
+            VonPrompt.renderScoreLevels([
                 .text("  Low  "),
                 ScoreLevel(what: "Medium"),
                 ScoreLevel(what: "High", examples: ["outage", "data loss"]),

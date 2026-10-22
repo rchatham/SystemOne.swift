@@ -3,6 +3,7 @@ import Dispatch
 import Foundation
 import SystemOneHTTP
 import SystemOne
+import SystemOneVon
 
 private enum CLIError: Error, LocalizedError {
     case usage(String)
@@ -214,8 +215,7 @@ private func run() async throws {
     let cors = try corsConfiguration(environment: environment)
     let signalWaiter = SignalWaiter()
 
-    let engine = try await SystemOneEngine(
-        tokenizerFolder: options.tokenizerFolder,
+    let engine = try await SystemOneEngine.von(tokenizerFolder: options.tokenizerFolder,
         verifiedWeightsURL: options.weightsFile
     )
     guard !signalWaiter.receivedSignal else { return }
@@ -234,7 +234,7 @@ private func run() async throws {
     do {
         try await server.start()
         print(
-            "Von Decision Server [\(SystemOneEngine.modelID)] listening on http://\(options.host):\(options.port)"
+            "Von Decision Server [\(VonBackend.modelID)] listening on http://\(options.host):\(options.port)"
         )
         await signalWaiter.wait()
         try await server.shutdown()
