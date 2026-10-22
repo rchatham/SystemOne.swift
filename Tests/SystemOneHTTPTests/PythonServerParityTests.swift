@@ -37,7 +37,8 @@ final class PythonServerParityTests: XCTestCase {
                 apiKey: apiKey,
                 cors: .disabled,
                 requestDeadline: .seconds(120)
-            )
+            ),
+            codec: .von
         ) { request in
             try await engine.systemOne(request)
         }

@@ -1,7 +1,6 @@
 import Foundation
 import JSON
 import SystemOne
-import SystemOneVon
 
 /// Failures while adapting metadata-free Python Von HTTP JSON to Swift types.
 public enum SystemOneWireCodecError: Error, Equatable, Sendable {
@@ -57,27 +56,20 @@ public struct WireSafetyLimits: Equatable, Sendable {
     public static let httpDefault = WireSafetyLimits()
 }
 
-private struct RenderedQuestionPlan {
-    let instructions: String
-    let options: [String]
-    let includesNullNoulForward: Bool
-
-    func forwardStates(_ state: String) -> [String] {
-        guard !options.isEmpty else { return [] }
-        return includesNullNoulForward ? [state, ""] : [state]
-    }
-}
-
 /// The metadata-free JSON adapter used at the Python-compatible HTTP boundary.
-/// Parsing limits and duplicate-key rejection are applied before typed decoding.
+/// Parsing limits and duplicate-key rejection are applied before typed decoding;
+/// the served model's profile bounds the work a request may plan.
 public struct SystemOneWireCodec: Sendable {
+    public let profile: any ModelProfile
     public let limits: OrderedJSONLimits
     public let safetyLimits: WireSafetyLimits
 
     public init(
+        profile: any ModelProfile,
         limits: OrderedJSONLimits = .httpDefault,
         safetyLimits: WireSafetyLimits = .httpDefault
     ) {
+        self.profile = profile
         self.limits = limits
         self.safetyLimits = safetyLimits
     }
@@ -89,7 +81,7 @@ public struct SystemOneWireCodec: Sendable {
         if let value = member("model", in: envelope) {
             model = try string(value, path: "$.model")
         } else {
-            model = "von-latest"
+            model = profile.defaultModelAlias
         }
         guard let stateValue = member("state", in: envelope) else {
             throw invalid("$.state", "field is required")
@@ -273,7 +265,7 @@ public struct SystemOneWireCodec: Sendable {
 
     private func validateSemanticBudget(_ request: SystemOneRequest) throws {
         try requireAtMost(request.questions.count, safetyLimits.maximumQuestions, name: "questions")
-        let state = renderState(request.state)
+        let state = profile.renderState(request.state)
         try requireAtMost(
             state.utf8.count, safetyLimits.maximumStateUTF8Bytes, name: "rendered state UTF-8 bytes"
         )
@@ -285,7 +277,7 @@ public struct SystemOneWireCodec: Sendable {
         var totalPackedBytes = 0
 
         for entry in request.questions {
-            let plan = renderPlan(entry.question)
+            let plan = profile.sketch(entry.question, renderedState: state)
             let instructionBytes = plan.instructions.utf8.count
             try requireAtMost(
                 instructionBytes,
@@ -320,26 +312,23 @@ public struct SystemOneWireCodec: Sendable {
                 name: "total rendered option UTF-8 bytes"
             )
 
-            for forwardState in plan.forwardStates(state) {
+            for forward in plan.forwards {
                 plannedForwards = try checkedAdd(plannedForwards, 1, name: "planned forwards")
                 plannedMarkers = try checkedAdd(
                     plannedMarkers, plan.options.count, name: "planned markers")
-                let packed = VonTokenizer.packSequence(
-                    state: forwardState,
-                    question: plan.instructions,
-                    options: plan.options
-                ).precomposedStringWithCanonicalMapping
-                guard occurrences(of: "[MASK]", in: packed) == plan.options.count else {
+                let packed = forward.precomposedStringWithCanonicalMapping
+                if let marker = profile.markerText,
+                    occurrences(of: marker, in: packed) != plan.options.count
+                {
                     throw invalid(
                         "$.questions.\(pathComponent(entry.id))",
-                        "literal [MASK] injection is not supported")
+                        "literal \(marker) injection is not supported")
                 }
                 let packedBytes = packed.utf8.count
-                // The pinned byte-level tokenizer emits at most one token per NFC UTF-8 byte,
-                // plus its two template tokens. Keep this hard model cap even if policy is relaxed.
+                // Keep the model's hard cap even if policy is relaxed.
                 let packedLimit = min(
                     safetyLimits.maximumPackedUTF8BytesPerForward,
-                    VonModernBERT.maximumSequenceLength - 2
+                    profile.maximumForwardUTF8Bytes
                 )
                 try requireAtMost(
                     packedBytes,
@@ -388,7 +377,7 @@ public struct SystemOneWireCodec: Sendable {
             case .noul:
                 answer = .noul(NoulAnswer(noul: maximumFiniteNumber))
             case .score(let score):
-                let descriptions = renderPlan(.score(score)).options
+                let descriptions = profile.sketch(.score(score), renderedState: "").options
                 let keys = descriptions.indices.map(String.init)
                 answer = .score(
                     ScoreAnswer(
@@ -405,7 +394,7 @@ public struct SystemOneWireCodec: Sendable {
             return AnswerEntry(id: entry.id, answer: answer)
         }
         let response = SystemOneResponse(
-            model: VonBackend.modelID,
+            model: profile.modelID,
             answers: answers,
             usage: Usage(inputTokens: Int.max, outputTokens: Int.max)
         )
@@ -435,52 +424,6 @@ public struct SystemOneWireCodec: Sendable {
         }
     }
 
-    private func renderState(_ state: SystemOneState) -> String {
-        switch state {
-        case .text(let text): return text
-        case .fields(let fields):
-            return fields.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
-        }
-    }
-
-    private func renderPlan(_ question: Question) -> RenderedQuestionPlan {
-        switch question {
-        case .choice(let choice):
-            let options = choice.criteria.map { option in
-                guard let description = option.description, !description.isEmpty else {
-                    return pythonStrip(option.key)
-                }
-                return pythonStrip(description)
-            }
-            return RenderedQuestionPlan(
-                instructions: choice.instructions, options: options, includesNullNoulForward: false)
-        case .noul(let noul):
-            let positive = noul.criteria?.trueDescription
-            let negative = noul.criteria?.falseDescription
-            let explicit = !(positive ?? "").isEmpty || !(negative ?? "").isEmpty
-            return RenderedQuestionPlan(
-                instructions: noul.instructions,
-                options: [
-                    positive.flatMap { $0.isEmpty ? nil : $0 } ?? "Yes, condition holds true.",
-                    negative.flatMap { $0.isEmpty ? nil : $0 } ?? "No, condition is false.",
-                ],
-                includesNullNoulForward: !explicit
-            )
-        case .score(let score):
-            let options = score.criteria.map { level in
-                switch level {
-                case .text(let text): return pythonStrip(text)
-                case .described(let what, let examples):
-                    let suffix =
-                        examples.isEmpty ? "" : " Examples: \(examples.joined(separator: ", "))"
-                    return pythonStrip("\(what)\(suffix)")
-                }
-            }
-            return RenderedQuestionPlan(
-                instructions: score.instructions, options: options, includesNullNoulForward: false)
-        }
-    }
-
     private func checkedAdd(_ lhs: Int, _ rhs: Int, name: String) throws -> Int {
         let (sum, overflow) = lhs.addingReportingOverflow(rhs)
         guard !overflow else {
@@ -503,29 +446,6 @@ public struct SystemOneWireCodec: Sendable {
             searchRange = range.upperBound..<text.endIndex
         }
         return count
-    }
-
-    private func pythonStrip(_ text: String) -> String {
-        let scalars = text.unicodeScalars
-        var lower = scalars.startIndex
-        var upper = scalars.endIndex
-        while lower < upper, isPythonWhitespace(scalars[lower]) { scalars.formIndex(after: &lower) }
-        while lower < upper {
-            let previous = scalars.index(before: upper)
-            guard isPythonWhitespace(scalars[previous]) else { break }
-            upper = previous
-        }
-        return String(scalars[lower..<upper])
-    }
-
-    private func isPythonWhitespace(_ scalar: Unicode.Scalar) -> Bool {
-        switch scalar.value {
-        case 0x0009...0x000D, 0x001C...0x0020, 0x0085, 0x00A0, 0x1680,
-            0x2000...0x200A, 0x2028...0x2029, 0x202F, 0x205F, 0x3000:
-            return true
-        default:
-            return false
-        }
     }
 
     private func encodeAnswer(_ answer: Answer, path: String) throws -> OrderedJSON {

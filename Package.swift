@@ -68,7 +68,6 @@ let package = Package(
             name: "SystemOneHTTP",
             dependencies: [
                 "SystemOne",
-                "SystemOneVon",
                 .product(name: "JSON", package: "JSON.swift"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
@@ -78,7 +77,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "SystemOneCLI",
-            dependencies: ["SystemOne", "SystemOneVon", "SystemOneHTTP"],
+            dependencies: ["SystemOne", "SystemOneVon", "SystemOneD1", "SystemOneHTTP"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
@@ -122,6 +121,7 @@ let package = Package(
                 "SystemOneHTTP",
                 "SystemOne",
                 "SystemOneVon",
+                "SystemOneD1",
                 .product(name: "JSON", package: "JSON.swift"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),

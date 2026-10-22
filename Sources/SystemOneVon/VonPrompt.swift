@@ -57,3 +57,48 @@ public enum VonPrompt {
         }
     }
 }
+
+/// von's prompt shape and Python-server metadata, without loading weights.
+public struct VonModelProfile: ModelProfile {
+    public init() {}
+
+    public var modelID: String { VonBackend.modelID }
+    public var defaultModelAlias: String { VonBackend.defaultModelAlias }
+    public var markerText: String? { "[MASK]" }
+
+    /// The byte-level tokenizer emits at most one token per NFC UTF-8 byte,
+    /// plus its two template tokens.
+    public var maximumForwardUTF8Bytes: Int { VonModernBERT.maximumSequenceLength - 2 }
+
+    public func renderState(_ state: SystemOneState) -> String {
+        VonPrompt.formatState(state)
+    }
+
+    public func sketch(_ question: Question, renderedState: String) -> PromptSketch {
+        let options: [String]
+        var states = [renderedState]
+        switch question {
+        case .choice(let choice):
+            options = VonPrompt.renderChoiceOptions(choice.criteria)
+        case .noul(let noul):
+            let rendered = VonPrompt.renderNoulCriteria(noul.criteria)
+            options = rendered.descriptions
+            // Default Noul adds a context-free null pass for debiasing.
+            if !rendered.hasExplicitCriteria { states.append("") }
+        case .score(let score):
+            options = VonPrompt.renderScoreLevels(score.criteria)
+        }
+        let forwards = options.isEmpty ? [] : states.map {
+            VonTokenizer.packSequence(state: $0, question: question.instructions, options: options)
+        }
+        return PromptSketch(instructions: question.instructions, options: options, forwards: forwards)
+    }
+
+    public var healthJSON: String {
+        #"{"status":"ok","service":"von-decision-server","version":"1.1.0","engine":"von-1.1","homage":"John von Neumann & Ludwig von Mises"}"#
+    }
+
+    public var modelsJSON: String {
+        #"{"models":[{"name":"von-latest","description":"Current Von System One decision model","release_date":"2026-09-21"},{"name":"von-1.1.0","description":"Von 1.1 stable release","release_date":"2026-09-21"},{"name":"jev-latest","description":"TypeSafe Jev compatibility alias","release_date":"2026-09-21"}],"object":"list","data":[{"id":"von-latest","object":"model","owned_by":"von"},{"id":"von-1.1.0","object":"model","owned_by":"von"},{"id":"jev-latest","object":"model","owned_by":"von"}]}"#
+    }
+}

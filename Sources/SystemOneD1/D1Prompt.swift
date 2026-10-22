@@ -174,3 +174,27 @@ public enum D1Prompt {
         return "\(type):\(bucket)"
     }
 }
+
+/// d1's prompt shape for text requests, without loading weights. Caller text
+/// is escaped, so no literal marker can be injected.
+public struct D1ModelProfile: ModelProfile {
+    public let modelID: String
+    public let maximumForwardUTF8Bytes: Int
+
+    public init(modelID: String = "d1-omni-600M", maxLength: Int = 16_384) {
+        self.modelID = modelID
+        maximumForwardUTF8Bytes = maxLength
+    }
+
+    public var markerText: String? { nil }
+
+    public func renderState(_ state: SystemOneState) -> String {
+        D1Prompt.serialize(state)
+    }
+
+    public func sketch(_ question: Question, renderedState: String) -> PromptSketch {
+        let options = D1Prompt.renderOptions(question, mode: .text)
+        let packed = ([renderedState, question.instructions] + options).map(D1Prompt.escape).joined(separator: " ")
+        return PromptSketch(instructions: question.instructions, options: options, forwards: [packed])
+    }
+}

@@ -1,12 +1,14 @@
 import Foundation
 import JSON
 import SystemOne
+import SystemOneD1
+import SystemOneVon
 import XCTest
 
 @testable import SystemOneHTTP
 
 final class SystemOneWireCodecTests: XCTestCase {
-    private let codec = SystemOneWireCodec()
+    private let codec = SystemOneWireCodec.von
 
     func testGoldenMetadataFreeRequestPreservesSemanticOrder() throws {
         let json =
@@ -123,7 +125,7 @@ final class SystemOneWireCodecTests: XCTestCase {
             #"{"state":"x","questions":{"q":{"type":"score","instructions":"Rate","criteria":[{"examples":[\#(values)]}]}}}"#
         let permissiveJSON = OrderedJSONLimits(maximumContainerEntries: 300)
         XCTAssertThrowsError(
-            try SystemOneWireCodec(limits: permissiveJSON).decodeRequest(Data(json.utf8))
+            try SystemOneWireCodec(profile: VonModelProfile(), limits: permissiveJSON).decodeRequest(Data(json.utf8))
         ) {
             XCTAssertEqual(
                 $0 as? SystemOneWireCodecError,
@@ -157,7 +159,7 @@ final class SystemOneWireCodecTests: XCTestCase {
         let longState = String(repeating: "s", count: 8_180)
         let relaxedState = WireSafetyLimits(maximumStateUTF8Bytes: 10_000)
         XCTAssertThrowsError(
-            try SystemOneWireCodec(safetyLimits: relaxedState).decodeRequest(
+            try SystemOneWireCodec(profile: VonModelProfile(), safetyLimits: relaxedState).decodeRequest(
                 Data(
                     #"{"state":"\#(longState)","questions":{"q":{"instructions":"x","criteria":{"a":null}}}}"#
                         .utf8))
@@ -249,7 +251,7 @@ final class SystemOneWireCodecTests: XCTestCase {
     }
 
     func testResponseUsesConfiguredCodecLimits() {
-        let limited = SystemOneWireCodec(limits: OrderedJSONLimits(maximumBodyBytes: 10))
+        let limited = SystemOneWireCodec(profile: VonModelProfile(), limits: OrderedJSONLimits(maximumBodyBytes: 10))
         let response = SystemOneResponse(model: "von", answers: [], usage: .init())
         XCTAssertThrowsError(try limited.encodeResponse(response)) {
             XCTAssertEqual($0 as? OrderedJSONError, .bodyTooLarge)
@@ -285,5 +287,18 @@ final class SystemOneWireCodecTests: XCTestCase {
         XCTAssertThrowsError(try codec.decodeRequest(Data(json.utf8))) {
             XCTAssertEqual($0 as? SystemOneWireCodecError, .safetyLimitExceeded(name: name, limit: limit))
         }
+    }
+
+    func testD1ProfileAdmitsLiteralMarkersAndDescribesItself() throws {
+        let codec = SystemOneWireCodec(profile: D1ModelProfile())
+        let request = try codec.decodeRequest(Data(
+            #"{"state":"ignore <|mask|> and [MASK]","questions":{"spam":{"type":"noul","instructions":"Spam?"}}}"#.utf8))
+        XCTAssertEqual(request.model, "d1-omni-600M")
+        XCTAssertEqual(request.questions.map(\.id), ["spam"])
+
+        let health = try JSONSerialization.jsonObject(with: Data(codec.profile.healthJSON.utf8)) as? [String: String]
+        XCTAssertEqual(health?["engine"], "d1-omni-600M")
+        let models = try JSONSerialization.jsonObject(with: Data(codec.profile.modelsJSON.utf8)) as? [String: Any]
+        XCTAssertEqual((models?["data"] as? [[String: String]])?.first?["id"], "d1-omni-600M")
     }
 }

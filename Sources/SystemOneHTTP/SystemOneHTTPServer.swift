@@ -105,7 +105,7 @@ public final class SystemOneHTTPServer: @unchecked Sendable {
 
     public init(
         configuration: SystemOneHTTPServerConfiguration = .init(),
-        codec: SystemOneWireCodec = .init(),
+        codec: SystemOneWireCodec,
         handler: @escaping SystemOneHTTPHandler
     ) {
         self.configuration = configuration
@@ -1138,10 +1138,10 @@ private final class SystemOneHTTPChannelHandler: ChannelInboundHandler, @uncheck
         switch (request.head.method, path) {
         case (.GET, "/"), (.GET, "/health"):
             finishImmediate(
-                request, response: json(.ok, Self.healthJSON, origin, keepAlive), context: context)
+                request, response: json(.ok, Data(codec.profile.healthJSON.utf8), origin, keepAlive), context: context)
         case (.GET, "/v1/models"):
             finishImmediate(
-                request, response: json(.ok, Self.modelsJSON, origin, keepAlive), context: context)
+                request, response: json(.ok, Data(codec.profile.modelsJSON.utf8), origin, keepAlive), context: context)
         case (.POST, "/v1/systemone"):
             evaluate(request, origin: origin, keepAlive: keepAlive, context: context)
         default:
@@ -1497,7 +1497,7 @@ private final class SystemOneHTTPChannelHandler: ChannelInboundHandler, @uncheck
         guard raw.count == 1, canonical.count == 1 else { return false }
         let value = raw[0]
         guard value.hasPrefix("Bearer ") else { return false }
-        let token = Self.pythonTrim(String(value.dropFirst("Bearer ".count)))
+        let token = PythonSemantics.pythonStrip(String(value.dropFirst("Bearer ".count)))
         return Self.constantTimeEqual(token, expected)
     }
 
@@ -1565,35 +1565,6 @@ private final class SystemOneHTTPChannelHandler: ChannelInboundHandler, @uncheck
         return HMAC<SHA256>.isValidAuthenticationCode(
             expectedCode, authenticating: Data(lhs.utf8), using: key)
     }
-
-    private static func pythonTrim(_ value: String) -> String {
-        let scalars = value.unicodeScalars
-        var lower = scalars.startIndex
-        var upper = scalars.endIndex
-        while lower < upper, pythonWhitespace(scalars[lower]) { scalars.formIndex(after: &lower) }
-        while lower < upper {
-            let previous = scalars.index(before: upper)
-            guard pythonWhitespace(scalars[previous]) else { break }
-            upper = previous
-        }
-        return String(scalars[lower..<upper])
-    }
-
-    private static func pythonWhitespace(_ scalar: Unicode.Scalar) -> Bool {
-        switch scalar.value {
-        case 0x0009...0x000D, 0x001C...0x0020, 0x0085, 0x00A0, 0x1680,
-            0x2000...0x200A, 0x2028...0x2029, 0x202F, 0x205F, 0x3000:
-            return true
-        default: return false
-        }
-    }
-
-    private static let healthJSON = Data(
-        #"{"status":"ok","service":"von-decision-server","version":"1.1.0","engine":"von-1.1","homage":"John von Neumann & Ludwig von Mises"}"#
-            .utf8)
-    private static let modelsJSON = Data(
-        #"{"models":[{"name":"von-latest","description":"Current Von System One decision model","release_date":"2026-09-21"},{"name":"von-1.1.0","description":"Von 1.1 stable release","release_date":"2026-09-21"},{"name":"jev-latest","description":"TypeSafe Jev compatibility alias","release_date":"2026-09-21"}],"object":"list","data":[{"id":"von-latest","object":"model","owned_by":"von"},{"id":"von-1.1.0","object":"model","owned_by":"von"},{"id":"jev-latest","object":"model","owned_by":"von"}]}"#
-            .utf8)
 }
 
 private final class SendableContext: @unchecked Sendable {

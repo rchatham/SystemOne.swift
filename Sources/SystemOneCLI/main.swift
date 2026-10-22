@@ -3,6 +3,7 @@ import Dispatch
 import Foundation
 import SystemOneHTTP
 import SystemOne
+import SystemOneD1
 import SystemOneVon
 
 private enum CLIError: Error, LocalizedError {
@@ -10,7 +11,7 @@ private enum CLIError: Error, LocalizedError {
     case invalidPort(String)
     case missingPath(option: String, path: String)
     case wrongPathType(option: String, path: String, expected: String)
-    case missingTokenizerFile(String)
+    case missingModelFile(String)
     case invalidCORSOrigin(String)
     case insecureBinding(String)
 
@@ -22,8 +23,8 @@ private enum CLIError: Error, LocalizedError {
         case .missingPath(let option, let path): return "\(option) path does not exist: \(path)"
         case .wrongPathType(let option, let path, let expected):
             return "\(option) must name \(expected): \(path)"
-        case .missingTokenizerFile(let path):
-            return "Tokenizer folder is missing required regular file: \(path)"
+        case .missingModelFile(let path):
+            return "Model folder is missing required regular file: \(path)"
         case .invalidCORSOrigin(let origin):
             return
                 "SYSTEMONE_CORS_ORIGINS must be an explicit comma-separated allowlist; invalid origin '\(origin)'."
@@ -33,16 +34,25 @@ private enum CLIError: Error, LocalizedError {
     }
 }
 
+private enum ServedModel {
+    /// LiquidAI d1-omni from a local snapshot folder.
+    case d1(folder: URL)
+    /// von from its tokenizer folder and converted, verified safetensors.
+    case von(tokenizerFolder: URL, weightsFile: URL)
+}
+
 private struct ServeOptions {
     let host: String
     let port: Int
-    let tokenizerFolder: URL
-    let weightsFile: URL
+    let model: ServedModel
 }
 
 private let usage = """
     Usage:
+      system-one serve --port <port> --model-folder <local-d1-snapshot> [--host 127.0.0.1]
       system-one serve --port <port> --tokenizer <local-folder> --weights <local-safetensors> [--host 127.0.0.1]
+
+    The first form serves d1-omni-600M; the second serves the deprecated von model.
 
     Environment:
       SYSTEMONE_API_KEY          Bearer token required by POST /v1/systemone when set.
@@ -56,12 +66,13 @@ private func parseServeOptions(_ arguments: [String]) throws -> ServeOptions {
     var portText: String?
     var tokenizerPath: String?
     var weightsPath: String?
+    var modelFolderPath: String?
     var index = 1
     var seen = Set<String>()
 
     while index < arguments.count {
         let option = arguments[index]
-        guard ["--host", "--port", "--tokenizer", "--weights"].contains(option) else {
+        guard ["--host", "--port", "--tokenizer", "--weights", "--model-folder"].contains(option) else {
             throw CLIError.usage("Unknown argument '\(option)'.\n\n\(usage)")
         }
         guard seen.insert(option).inserted else {
@@ -77,6 +88,7 @@ private func parseServeOptions(_ arguments: [String]) throws -> ServeOptions {
         case "--port": portText = value
         case "--tokenizer": tokenizerPath = value
         case "--weights": weightsPath = value
+        case "--model-folder": modelFolderPath = value
         default: preconditionFailure("validated option")
         }
         index += 1
@@ -88,28 +100,41 @@ private func parseServeOptions(_ arguments: [String]) throws -> ServeOptions {
     guard let port = Int(portText), (1...65_535).contains(port) else {
         throw CLIError.invalidPort(portText)
     }
-    guard let tokenizerPath else { throw CLIError.usage("--tokenizer is required.\n\n\(usage)") }
-    guard let weightsPath else { throw CLIError.usage("--weights is required.\n\n\(usage)") }
-
     let fileManager = FileManager.default
-    let tokenizerURL = URL(fileURLWithPath: tokenizerPath).standardizedFileURL
-    let weightsURL = URL(fileURLWithPath: weightsPath).standardizedFileURL
-    try requireDirectory(tokenizerURL, option: "--tokenizer", fileManager: fileManager)
-    for name in ["tokenizer.json", "tokenizer_config.json"] {
-        let file = tokenizerURL.appendingPathComponent(name)
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: file.path, isDirectory: &isDirectory),
-            !isDirectory.boolValue
-        else {
-            throw CLIError.missingTokenizerFile(file.path)
+    func requireFiles(_ names: [String], in folder: URL) throws {
+        for name in names {
+            let file = folder.appendingPathComponent(name)
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: file.path, isDirectory: &isDirectory),
+                !isDirectory.boolValue
+            else {
+                throw CLIError.missingModelFile(file.path)
+            }
         }
     }
-    try requireRegularFile(weightsURL, option: "--weights", fileManager: fileManager)
+
+    let model: ServedModel
+    switch (modelFolderPath, tokenizerPath, weightsPath) {
+    case (let folderPath?, nil, nil):
+        let folder = URL(fileURLWithPath: folderPath).standardizedFileURL
+        try requireDirectory(folder, option: "--model-folder", fileManager: fileManager)
+        try requireFiles(["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"], in: folder)
+        model = .d1(folder: folder)
+    case (nil, let tokenizerPath?, let weightsPath?):
+        let tokenizerURL = URL(fileURLWithPath: tokenizerPath).standardizedFileURL
+        let weightsURL = URL(fileURLWithPath: weightsPath).standardizedFileURL
+        try requireDirectory(tokenizerURL, option: "--tokenizer", fileManager: fileManager)
+        try requireFiles(["tokenizer.json", "tokenizer_config.json"], in: tokenizerURL)
+        try requireRegularFile(weightsURL, option: "--weights", fileManager: fileManager)
+        model = .von(tokenizerFolder: tokenizerURL, weightsFile: weightsURL)
+    default:
+        throw CLIError.usage(
+            "Pass either --model-folder, or both --tokenizer and --weights.\n\n\(usage)")
+    }
 
     let apiKey = normalizedAPIKey(ProcessInfo.processInfo.environment["SYSTEMONE_API_KEY"])
     guard isLoopback(host) || apiKey != nil else { throw CLIError.insecureBinding(host) }
-    return ServeOptions(
-        host: host, port: port, tokenizerFolder: tokenizerURL, weightsFile: weightsURL)
+    return ServeOptions(host: host, port: port, model: model)
 }
 
 private func requireDirectory(_ url: URL, option: String, fileManager: FileManager) throws {
@@ -215,9 +240,18 @@ private func run() async throws {
     let cors = try corsConfiguration(environment: environment)
     let signalWaiter = SignalWaiter()
 
-    let engine = try await SystemOneEngine.von(tokenizerFolder: options.tokenizerFolder,
-        verifiedWeightsURL: options.weightsFile
-    )
+    let engine: SystemOneEngine
+    let profile: any ModelProfile
+    switch options.model {
+    case .d1(let folder):
+        engine = try await SystemOneEngine.d1(modelFolder: folder)
+        let configuration = try D1Configuration(modelFolder: folder)
+        profile = D1ModelProfile(modelID: engine.modelID, maxLength: configuration.maxLength)
+    case .von(let tokenizerFolder, let weightsFile):
+        engine = try await SystemOneEngine.von(
+            tokenizerFolder: tokenizerFolder, verifiedWeightsURL: weightsFile)
+        profile = VonModelProfile()
+    }
     guard !signalWaiter.receivedSignal else { return }
 
     let server = SystemOneHTTPServer(
@@ -226,7 +260,8 @@ private func run() async throws {
             port: options.port,
             apiKey: apiKey,
             cors: cors
-        )
+        ),
+        codec: SystemOneWireCodec(profile: profile)
     ) { request in
         try await engine.systemOne(request)
     }
@@ -234,7 +269,7 @@ private func run() async throws {
     do {
         try await server.start()
         print(
-            "Von Decision Server [\(VonBackend.modelID)] listening on http://\(options.host):\(options.port)"
+            "System One server [\(engine.modelID)] listening on http://\(options.host):\(options.port)"
         )
         await signalWaiter.wait()
         try await server.shutdown()
@@ -247,6 +282,6 @@ private func run() async throws {
 do {
     try await run()
 } catch {
-    writeStandardError("von: \(error.localizedDescription)")
+    writeStandardError("system-one: \(error.localizedDescription)")
     exit(EXIT_FAILURE)
 }

@@ -405,7 +405,7 @@ final class SystemOneHTTPServerTests: XCTestCase {
 
     func testConcurrentStartShutdownPublicationRaceIsBounded() async throws {
         for _ in 0..<20 {
-            let server = SystemOneHTTPServer { request in
+            let server = SystemOneHTTPServer(codec: .von) { request in
                 SystemOneResponse(model: request.model, answers: [], usage: .init())
             }
             let startTask = Task { try await server.start() }
@@ -422,12 +422,12 @@ final class SystemOneHTTPServerTests: XCTestCase {
     }
 
     func testShutdownRemainsIdempotentAfterBindFailure() async throws {
-        let first = SystemOneHTTPServer { request in
+        let first = SystemOneHTTPServer(codec: .von) { request in
             SystemOneResponse(model: request.model, answers: [], usage: .init())
         }
         try await first.start()
         let occupiedPort = try XCTUnwrap(first.port)
-        let second = SystemOneHTTPServer(configuration: .init(port: occupiedPort)) { request in
+        let second = SystemOneHTTPServer(configuration: .init(port: occupiedPort), codec: .von) { request in
             SystemOneResponse(model: request.model, answers: [], usage: .init())
         }
 
@@ -442,7 +442,7 @@ final class SystemOneHTTPServerTests: XCTestCase {
     }
 
     func testGracefulShutdownClosesStalledPartialUploadPromptly() async throws {
-        let server = SystemOneHTTPServer { request in
+        let server = SystemOneHTTPServer(codec: .von) { request in
             SystemOneResponse(model: request.model, answers: [], usage: .init())
         }
         try await server.start()
@@ -468,7 +468,7 @@ final class SystemOneHTTPServerTests: XCTestCase {
         let entered = TestSignal()
         let release = TestSignal()
         let shutdownFinished = TestFlag()
-        let server = SystemOneHTTPServer { request in
+        let server = SystemOneHTTPServer(codec: .von) { request in
             await entered.signal()
             await release.wait()
             return SystemOneResponse(model: request.model, answers: [], usage: .init())
@@ -508,7 +508,7 @@ final class SystemOneHTTPServerTests: XCTestCase {
             try await Task.sleep(nanoseconds: 60_000_000)
             return SystemOneResponse(model: request.model, answers: [], usage: .init())
         }
-        let server = SystemOneHTTPServer(handler: handler)
+        let server = SystemOneHTTPServer(codec: .von, handler: handler)
         try await server.start()
         let port = try XCTUnwrap(server.port)
         let endpoint = URL(string: "http://127.0.0.1:\(port)/v1/systemone")!
@@ -848,7 +848,7 @@ final class SystemOneHTTPServerTests: XCTestCase {
             requestDeadline: .seconds(30),
             shutdownGracePeriod: .milliseconds(60)
         )
-        let server = SystemOneHTTPServer(configuration: configuration) { request in
+        let server = SystemOneHTTPServer(configuration: configuration, codec: .von) { request in
             await entered.signal()
             await release.wait()
             return SystemOneResponse(model: request.model, answers: [], usage: .init())
@@ -869,7 +869,7 @@ final class SystemOneHTTPServerTests: XCTestCase {
     }
 
     func testNonLoopbackWithoutAPIKeyFailsBeforeBindUnlessExplicitlyAllowed() async throws {
-        let denied = SystemOneHTTPServer(configuration: .init(host: "0.0.0.0")) { request in
+        let denied = SystemOneHTTPServer(configuration: .init(host: "0.0.0.0"), codec: .von) { request in
             SystemOneResponse(model: request.model, answers: [], usage: .init())
         }
         do {
@@ -929,7 +929,7 @@ final class SystemOneHTTPServerTests: XCTestCase {
         },
         operation: (URL) async throws -> T
     ) async throws -> T {
-        let server = SystemOneHTTPServer(configuration: configuration, handler: handler)
+        let server = SystemOneHTTPServer(configuration: configuration, codec: .von, handler: handler)
         try await server.start()
         let port = try XCTUnwrap(server.port)
         do {
