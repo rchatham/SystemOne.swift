@@ -42,7 +42,7 @@ private struct ServeOptions {
 
 private let usage = """
     Usage:
-      systemone serve --port <port> --tokenizer <local-folder> --weights <local-safetensors> [--host 127.0.0.1]
+      system-one serve --port <port> --tokenizer <local-folder> --weights <local-safetensors> [--host 127.0.0.1]
 
     Environment:
       SYSTEMONE_API_KEY          Bearer token required by POST /v1/systemone when set.

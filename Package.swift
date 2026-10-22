@@ -10,8 +10,9 @@ let package = Package(
     products: [
         .library(name: "SystemOne", targets: ["SystemOne"]),
         .library(name: "SystemOneVon", targets: ["SystemOneVon"]),
+        .library(name: "SystemOneD1", targets: ["SystemOneD1"]),
         .library(name: "SystemOneHTTP", targets: ["SystemOneHTTP"]),
-        .executable(name: "systemone", targets: ["SystemOneCLI"]),
+        .executable(name: "system-one", targets: ["SystemOneCLI"]),
     ],
     dependencies: [
         .package(
@@ -48,6 +49,18 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "SystemOneD1",
+            dependencies: [
+                "SystemOne",
+                .product(name: "Hub", package: "swift-transformers"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFFT", package: "mlx-swift"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
@@ -91,6 +104,15 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/Tokenizer"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "SystemOneD1Tests",
+            dependencies: [
+                "SystemOne",
+                "SystemOneD1",
+                .product(name: "MLX", package: "mlx-swift"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

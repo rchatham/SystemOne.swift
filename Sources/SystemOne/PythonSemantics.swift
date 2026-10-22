@@ -7,6 +7,29 @@ package enum PythonSemantics {
         text.unicodeScalars.count
     }
 
+    /// `json.dumps(text, ensure_ascii=False)`: quotes, backslash, and C0
+    /// controls are escaped (lowercase `\\u00xx` beyond the short forms);
+    /// everything else, including non-ASCII, passes through.
+    package static func jsonString(_ text: String) -> String {
+        var out = "\""
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            case "\u{08}": out += "\\b"
+            case "\u{0C}": out += "\\f"
+            case _ where scalar.value < 0x20:
+                out += String(format: "\\u%04x", scalar.value)
+            default:
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out + "\""
+    }
+
     /// Matches CPython 3.12 `str.strip()` whitespace behavior.
     package static func pythonStrip(_ text: String) -> String {
         let scalars = text.unicodeScalars

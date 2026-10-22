@@ -115,7 +115,7 @@ never defaults to the workspace-assigned port 8000):
 ```bash
 VON_API_KEY='replace-me' \
 VON_CORS_ORIGINS='https://app.example,https://admin.example' \
-  swift run systemone serve \
+  swift run system-one serve \
     --host 127.0.0.1 \
     --port 8015 \
     --tokenizer Tests/SystemOneVonTests/Resources/Tokenizer \

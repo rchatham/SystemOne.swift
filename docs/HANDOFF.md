@@ -220,7 +220,7 @@ port 8000. Example:
 
 ```bash
 VON_API_KEY=replace-me VON_CORS_ORIGINS=https://app.example \
-  swift run systemone serve --host 127.0.0.1 --port 8015 \
+  swift run system-one serve --host 127.0.0.1 --port 8015 \
   --tokenizer Tests/SystemOneVonTests/Resources/Tokenizer \
   --weights weights/option_marker.safetensors
 ```
