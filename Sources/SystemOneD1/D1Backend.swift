@@ -99,8 +99,9 @@ public final class D1Backend: DecisionBackend {
         return DecisionPlan(rows: rows, decisions: decisions, usage: Usage(inputTokens: read, outputTokens: 0))
     }
 
-    // TODO(user): d1's reference batches by a flat token budget (`_run`), not
-    // by the shared padded-attention bound. See the note in the PR summary.
+    // d1 currently uses the shared `microbatches(for:strategy:)` default (a
+    // padded-attention bound). The reference `_run` batches by a flat token
+    // budget instead; see `microbatches(for:strategy:)` below once overridden.
 
     public func logits(for rows: [D1Row]) async throws -> BatchLogitsOutput {
         let perRow: [[Float]]

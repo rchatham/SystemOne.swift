@@ -5,7 +5,7 @@ end of every working session.
 
 ## Project
 
-**VonSwift** — Swift + MLX port of [wfzyx/von](https://github.com/wfzyx/von),
+**SystemOne** (formerly VonSwift) — Swift + MLX runtime for System One decision models; it began as a port of [wfzyx/von](https://github.com/wfzyx/von),
 the open-source non-autoregressive "System One" decision model
 (choice / noul / score in a single forward pass). Goal: run the released von
 checkpoint natively in Swift on Apple Silicon, verified step-by-step against
@@ -29,6 +29,14 @@ Read these first, in order:
 | 6 — Public API | ✅ done |
 | 7 — HTTP server `/v1/systemone` | ✅ done |
 | 8 — Performance | ✅ done |
+| 9 — SystemOne core + d1-omni (text, vision, audio) | ✅ done |
+
+d1 lives in `SystemOneD1`; see [D1.md](D1.md). Its oracle is a separate venv,
+`.venv-d1` (torch 2.14.0, torchvision 0.29.1, transformers 5.17.0, tokenizers
+0.23.2, Pillow, soundfile), and the pinned snapshot is
+`~/.cache/huggingface/hub/models--LiquidAI--d1-omni-600M/snapshots/02b55d7076f15129e59ab3f94783f32c4b088674`.
+MLX tests that touch weights need the Xcode test bundle (SwiftPM bundles and
+CLI builds lack the Metal library, even for the CPU device).
 
 ## Environment facts
 
@@ -71,7 +79,7 @@ Regenerate only when intentionally changing the oracle fixture:
 
 ## Phase 2 tokenizer
 
-`VonTokenizer` is a VonSwift-owned local-only wrapper around the `Tokenizers`
+`VonTokenizer` is a SystemOne-owned local-only wrapper around the `Tokenizers`
 product from `huggingface/swift-transformers` 1.1.6. It loads only an explicit
 model folder via `AutoTokenizer.from(modelFolder:)`; the public API exposes
 special-token-aware encoding, Python-compatible state token counts (including
@@ -158,7 +166,7 @@ Measured global max absolute errors were:
 
 ## Phase 6 public API
 
-`VonEngine` is a public actor that loads a tokenizer only from an explicit
+`SystemOneEngine` is a public actor that loads a tokenizer only from an explicit
 local folder and weights only through `VonWeights.verifiedProduction`. It owns
 all MLX state, evaluates lazy output inside actor isolation, and converts to raw
 `[Float]` only after `eval`. `systemOne` uses a two-phase plan-then-execute
@@ -198,7 +206,7 @@ rounded golden outputs through the Xcode-built bundle on both MLX CPU and GPU.
 never uses Swift `Codable` dictionary iteration. It preserves Python request
 order and emits Python field/object order for successful responses. GET `/`,
 `/health`, and `/v1/models` match pinned Python bytes; POST `/v1/systemone`
-uses the public `VonEngine` actor.
+uses the public `SystemOneEngine` actor.
 
 The server bounds raw and decoded headers/trailers, body bytes, connections,
 admitted/queued inference, semantic inference work, worst-case escaped response
@@ -208,7 +216,7 @@ rejected as 422 before inference. `Expect: 100-continue` receives 100 only after
 authentication, declared-length/size, and request-admission checks; unsupported
 expectations receive 417. Authentication comparisons are timing-safe, and
 non-loopback binds fail closed without a key. CORS is disabled by default and
-accepts only `VON_CORS_ORIGINS` explicit origins; unlike Python's wildcard
+accepts only `SYSTEMONE_CORS_ORIGINS` explicit origins; unlike Python's wildcard
 default, `*` is intentionally rejected. Swift also intentionally rejects a
 strict resource/syntax subset of Python inputs; error parity is therefore by
 HTTP status category rather than error text.
@@ -219,7 +227,7 @@ and handles SIGINT/SIGTERM through bounded server shutdown. It never assigns
 port 8000. Example:
 
 ```bash
-VON_API_KEY=replace-me VON_CORS_ORIGINS=https://app.example \
+SYSTEMONE_API_KEY=replace-me SYSTEMONE_CORS_ORIGINS=https://app.example \
   swift run system-one serve --host 127.0.0.1 --port 8015 \
   --tokenizer Tests/SystemOneVonTests/Resources/Tokenizer \
   --weights weights/option_marker.safetensors
@@ -314,9 +322,9 @@ relative `1e-6`; structure, order, types, and non-floats remain exact.
 
 ## Phase 8 performance
 
-`VonBatchingStrategy` (`.sequential` / `.automatic` / `.batched`) is a method
+`BatchingStrategy` (`.sequential` / `.automatic` / `.batched`) is a method
 parameter on `systemOne` (default `.automatic`). It is not serialized or on the
-HTTP wire. `VonEngine.systemOne` pre-plans all inference rows and fans out via
+HTTP wire. `SystemOneEngine.systemOne` pre-plans all inference rows and fans out via
 bounded greedy microbatches under an absolute B×L² ≤ 1,048,576 guard and
 amplification ceilings (auto 1.5×, batched 2.0×).
 
@@ -354,5 +362,5 @@ CPU is diagnostic only. GPU (Release Xcode, Metal) is the acceptance target.
 - CPU benchmarks can hit the Metal watchdog; always use Release Xcode GPU for
   acceptance.
 - The ordered bounded JSON parser was upstreamed locally on JSON.swift feature
-  branch `dddbe8b` but VonSwift retains its current parser until a remote
+  branch `dddbe8b` but SystemOne retains its current parser until a remote
   release/tag exists.

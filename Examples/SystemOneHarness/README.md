@@ -1,7 +1,8 @@
 # SystemOneHarness
 
-A minimal SwiftUI app for running `SystemOneEngine` on an iPhone or iPad. It loads
-the verified production weights, runs a fixed four-question `systemOne`
+A minimal SwiftUI app for running `SystemOneEngine` on an iPhone or iPad with
+the von backend (d1-omni support in the harness is a planned follow-up). It loads
+the verified von production weights, runs a fixed four-question `systemOne`
 request (Choice, default Noul, explicit Noul, Score), and shows answers, load
 and inference timings, and process/MLX memory.
 

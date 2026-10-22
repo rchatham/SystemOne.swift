@@ -10,6 +10,10 @@ on:
         description: "Run production-weight GPU parity (downloads the checkpoint and installs PyTorch)"
         type: boolean
         default: false
+      d1-parity:
+        description: "Run d1-omni-600M tokenizer and GPU parity (downloads the 2.3 GB snapshot)"
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -111,3 +115,47 @@ jobs:
           xcrun xctest \
             -XCTest SystemOneVonTests.VonEngineTests/testProductionPublicAPIParityWhenConfigured \
             .build/xcode/Build/Products/Release/SystemOneVonTests.xctest
+
+  d1-parity:
+    name: d1-omni GPU parity
+    if: github.event_name == 'workflow_dispatch' && inputs.d1-parity
+    runs-on: macos-15
+    env:
+      D1_MODEL_FOLDER: "${{ github.workspace }}/weights/d1-omni-600M"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download pinned d1-omni-600M snapshot
+        run: |
+          pip install "huggingface_hub>=1.0"
+          hf download LiquidAI/d1-omni-600M \
+            --revision 02b55d7076f15129e59ab3f94783f32c4b088674 \
+            --local-dir "$D1_MODEL_FOLDER"
+
+      - name: Tokenizer and prompt parity
+        run: swift test --filter SystemOneD1Tests
+
+      - name: Build Xcode test bundle
+        run: |
+          xcodebuild build-for-testing \
+            -scheme SystemOne-Package \
+            -destination 'platform=macOS,arch=arm64' \
+            -configuration Release \
+            -derivedDataPath .build/xcode
+
+      - name: Weight parity (GPU)
+        env:
+          D1_MODEL_PARITY: "1"
+          D1_DEVICE: gpu
+        run: |
+          xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests \
+            .build/xcode/Build/Products/Release/SystemOneD1Tests.xctest
