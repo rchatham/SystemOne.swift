@@ -60,9 +60,10 @@ xcrun devicectl device process launch --device <id> --console --terminate-existi
 ```
 
 On an iPhone 14 Pro (Release): load 6.7 s; text 0.35 s; a three-question photo
-request 5.0 s; a 3 s voice clip 0.32 s; MLX peak 3.36 GB with 1.7 GB still
-available. A photo is slow because every question re-runs the trunk over the
-roughly 1,800-position image prefix, as the reference does.
+request 2.9 s; a four-question 3 s voice clip 0.26–0.32 s; MLX peak 3.35 GB with 1.7 GB still
+available. The photo's roughly 1,800-position image prefix runs through the
+trunk once per request and every question reuses its states (5.0 s when each
+question re-ran it, as the reference does).
 
 ## Memory
 

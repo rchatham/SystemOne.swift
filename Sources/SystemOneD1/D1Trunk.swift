@@ -8,7 +8,9 @@ import MLXNN
 /// A media prefix enters as embeddings in front of the text. Prefix positions
 /// attend only to the prefix, and the convolution never lets the last prefix
 /// position read the first text position, so the prefix is a function of the
-/// media alone. Text, image, and audio rows run the same weights.
+/// media alone: a request records its prefix's states once (`prefixState(of:)`)
+/// and each question then runs only its text positions. Text, image, and audio
+/// rows run the same weights.
 final class D1Trunk {
     private enum Operator {
         case convolution(inProjection: Linear, kernel: MLXArray, outProjection: Linear)
@@ -73,6 +75,31 @@ final class D1Trunk {
         }
     }
 
+    /// The per-layer states of a media prefix that text positions read. They
+    /// depend on the media alone, so one request computes them once and every
+    /// question reuses them.
+    struct PrefixState {
+        enum Layer {
+            /// `[1, 1, C]` `b * u` of the last prefix position: the left tap of
+            /// the first text position.
+            case convolution(lastProduct: MLXArray)
+            /// `[1, Hkv, P, head]` keys after RMSNorm and RoPE, and values.
+            case attention(keys: MLXArray, values: MLXArray)
+        }
+
+        let length: Int
+        let layers: [Layer]
+
+        var arrays: [MLXArray] {
+            layers.flatMap { layer -> [MLXArray] in
+                switch layer {
+                case .convolution(let lastProduct): return [lastProduct]
+                case .attention(let keys, let values): return [keys, values]
+                }
+            }
+        }
+    }
+
     /// Runs right-padded rows of embeddings.
     ///
     /// - Parameters:
@@ -86,12 +113,49 @@ final class D1Trunk {
         prefixLengths: [Int],
         captureLayers: Bool = false
     ) -> (output: MLXArray, layers: [MLXArray]) {
+        let run = forward(hidden, lengths: lengths, prefixLengths: prefixLengths, after: nil,
+                          captureLayers: captureLayers)
+        return (run.output, run.layers)
+    }
+
+    /// Runs right-padded text rows that all follow the same media prefix,
+    /// reading the prefix through its cached states instead of recomputing it.
+    ///
+    /// - Parameters:
+    ///   - hidden: `[B, T, D]` text embeddings, zero padding last.
+    ///   - lengths: real text positions per row.
+    ///   - prefix: the states `prefixState(of:)` recorded for the shared prefix.
+    func callAsFunction(_ hidden: MLXArray, lengths: [Int], after prefix: PrefixState) -> MLXArray {
+        forward(hidden, lengths: lengths, prefixLengths: lengths.map { _ in 0 }, after: prefix).output
+    }
+
+    /// Records the states text positions read from a `[P, D]` media prefix.
+    ///
+    /// The prefix runs alone: it attends only to itself, and its last position's
+    /// right tap is the zero padding `keepRight` would otherwise impose.
+    func prefixState(of embeddings: MLXArray) -> PrefixState {
+        let length = embeddings.dim(0)
+        let run = forward(embeddings.expandedDimensions(axis: 0), lengths: [length], prefixLengths: [0],
+                          after: nil, recording: true)
+        return PrefixState(length: length, layers: run.recorded)
+    }
+
+    private func forward(
+        _ hidden: MLXArray,
+        lengths: [Int],
+        prefixLengths: [Int],
+        after prefix: PrefixState?,
+        recording: Bool = false,
+        captureLayers: Bool = false
+    ) -> (output: MLXArray, layers: [MLXArray], recorded: [PrefixState.Layer]) {
         let batch = hidden.dim(0)
         let length = hidden.dim(1)
         let eps = configuration.normEps
         let positions = MLXArray(0..<Int32(length))
         let lengthColumn = MLXArray(lengths.map(Int32.init)).reshaped(batch, 1)
         let prefixColumn = MLXArray(prefixLengths.map(Int32.init)).reshaped(batch, 1)
+        // Text after a cached prefix sits at positions P..<P+T.
+        let offset = prefix?.length ?? 0
 
         let real = positions.reshaped(1, length) .< lengthColumn
         let padding = real.asType(.float32).expandedDimensions(axis: -1)
@@ -99,9 +163,30 @@ final class D1Trunk {
         let keepRight = (positions.reshaped(1, length) .!= (prefixColumn - 1))
             .asType(.float32).expandedDimensions(axis: -1)
 
-        let needsMask = lengths.contains { $0 != length } || prefixLengths.contains { $0 > 0 }
+        // Rows whose text together is no longer than the prefix fold into one
+        // sequence that reads the prefix keys once, with a block mask keeping
+        // each row to its own text. Otherwise each row gets its own copy of the
+        // prefix keys, which costs little next to that much text.
+        let folded = prefix.map { batch > 1 && batch * length <= $0.length } ?? false
+
         var mask: MLXArray?
-        if needsMask {
+        if folded {
+            let textPositions = batch * length
+            let row = MLXArray((0..<textPositions).map { Int32($0 / length) })
+            let realKey = MLXArray((0..<textPositions).map { $0 % length < lengths[$0 / length] })
+            let ownText = logicalAnd(row.reshaped(-1, 1) .== row.reshaped(1, -1), realKey.reshaped(1, -1))
+            let textMask = MLX.where(ownText, MLXArray(Float(0)), MLXArray(Self.blocked))
+            mask = concatenated([MLXArray.zeros([textPositions, offset]), textMask], axis: 1)
+                .reshaped(1, 1, textPositions, offset + textPositions)
+        } else if prefix != nil {
+            // Text reads every prefix key and its own row's real text keys.
+            if lengths.contains(where: { $0 != length }) {
+                let keys = MLXArray(0..<Int32(offset + length)).reshaped(1, offset + length)
+                let paddedKey = keys .>= (lengthColumn + Int32(offset))
+                mask = MLX.where(paddedKey, MLXArray(Self.blocked), MLXArray(Float(0)))
+                    .reshaped(batch, 1, 1, offset + length)
+            }
+        } else if lengths.contains(where: { $0 != length }) || prefixLengths.contains(where: { $0 > 0 }) {
             let mediaQuery = (positions.reshaped(1, length) .< prefixColumn).expandedDimensions(axis: 2)
             let textKey = (positions.reshaped(1, length) .>= prefixColumn).expandedDimensions(axis: 1)
             let paddedKey = logicalNot(real).expandedDimensions(axis: 1)
@@ -112,14 +197,27 @@ final class D1Trunk {
 
         var hidden = hidden
         var captured: [MLXArray] = captureLayers ? [hidden] : []
-        for layer in layers {
+        var recorded: [PrefixState.Layer] = []
+        for (index, layer) in layers.enumerated() {
             let normalized = MLXFast.rmsNorm(hidden, weight: layer.operatorNorm, eps: eps)
             switch layer.op {
             case .convolution(let inProjection, let kernel, let outProjection):
                 let projected = inProjection(normalized * padding)
                 let parts = projected.split(parts: 3, axis: -1)
                 let (b, c, u) = (parts[0], parts[1], parts[2])
-                let bx = padded(b * u, widths: [0, [1, 1], 0])
+                let product = b * u
+                if recording {
+                    // Projected on its own so the cache holds one position, not a
+                    // view pinning the whole `[1, P, C]` product.
+                    let last = inProjection(normalized[0..., (length - 1)...]).split(parts: 3, axis: -1)
+                    recorded.append(.convolution(lastProduct: last[0] * last[2]))
+                }
+                let zero = MLXArray.zeros([batch, 1, product.dim(2)], dtype: product.dtype)
+                var before = zero
+                if case .convolution(let lastProduct)? = prefix?.layers[index] {
+                    before = MLX.broadcast(lastProduct, to: zero.shape)
+                }
+                let bx = concatenated([before, product, zero], axis: 1)
                 let left = bx[0..., 0..<length]
                 let centre = bx[0..., 1..<(length + 1)]
                 let right = bx[0..., 2..<(length + 2)] * keepRight
@@ -135,16 +233,38 @@ final class D1Trunk {
                                         weight: queryNorm, eps: eps).transposed(0, 2, 1, 3)
                 var k = MLXFast.rmsNorm(heads(key(normalized), count: configuration.numKeyValueHeads),
                                         weight: keyNorm, eps: eps).transposed(0, 2, 1, 3)
-                let v = heads(value(normalized), count: configuration.numKeyValueHeads).transposed(0, 2, 1, 3)
+                var v = heads(value(normalized), count: configuration.numKeyValueHeads).transposed(0, 2, 1, 3)
                 q = MLXFast.RoPE(q, dimensions: headDimension, traditional: false,
-                                 base: configuration.ropeTheta, scale: 1, offset: 0)
+                                 base: configuration.ropeTheta, scale: 1, offset: offset)
                 k = MLXFast.RoPE(k, dimensions: headDimension, traditional: false,
-                                 base: configuration.ropeTheta, scale: 1, offset: 0)
-                let attended = MLXFast.scaledDotProductAttention(
+                                 base: configuration.ropeTheta, scale: 1, offset: offset)
+                if recording { recorded.append(.attention(keys: k, values: v)) }
+                if case .attention(let keys, let values)? = prefix?.layers[index] {
+                    if folded {
+                        // [B, H, T, head] -> [1, H, B·T, head]
+                        func fold(_ x: MLXArray) -> MLXArray {
+                            x.transposed(1, 0, 2, 3).reshaped(1, x.dim(1), batch * length, headDimension)
+                        }
+                        q = fold(q)
+                        k = concatenated([keys, fold(k)], axis: 2)
+                        v = concatenated([values, fold(v)], axis: 2)
+                    } else {
+                        func shared(_ x: MLXArray) -> MLXArray {
+                            MLX.broadcast(x, to: [batch, x.dim(1), x.dim(2), x.dim(3)])
+                        }
+                        k = concatenated([shared(keys), k], axis: 2)
+                        v = concatenated([shared(values), v], axis: 2)
+                    }
+                }
+                var attended = MLXFast.scaledDotProductAttention(
                     queries: q, keys: k, values: v,
                     scale: 1 / Float(headDimension).squareRoot(),
                     mask: mask
                 )
+                if folded {
+                    attended = attended.reshaped(attended.dim(1), batch, length, headDimension)
+                        .transposed(1, 0, 2, 3)
+                }
                 hidden = hidden + output(attended.transposed(0, 2, 1, 3).reshaped(batch, length, -1))
             }
             let ffnInput = MLXFast.rmsNorm(hidden, weight: layer.feedForwardNorm, eps: eps)
@@ -153,6 +273,6 @@ final class D1Trunk {
         }
         let output = MLXFast.rmsNorm(hidden, weight: finalNorm, eps: eps)
         if captureLayers { captured.append(output) }
-        return (output, captured)
+        return (output, captured, recorded)
     }
 }
