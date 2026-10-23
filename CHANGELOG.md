@@ -16,8 +16,8 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   `SystemOneEngine.von(tokenizerFolder:verifiedWeightsURL:)` factories.
 - `D1Precision`: an opt-in float16 mode for d1 (`precision:` on
   `SystemOneEngine.d1`, `D1Backend`, and `D1Weights`) that halves weight
-  memory (2.24 GB to 1.12 GB in MLX), aimed at 4 GB iOS devices (measured on
-  a 6 GB iPhone 14 Pro so far). Weights convert to float16 on the CPU at load,
+  memory (2.24 GB to 1.12 GB in MLX) so d1-omni-600M runs on 4 GB iOS
+  devices (verified on an iPhone 13: 1.78 GB MLX peak, 1.07 GB to spare). Weights convert to float16 on the CPU at load,
   and a weight beyond float16's range fails the load instead of becoming
   infinity; the mel front end, logits, and calibration stay float32.
   The iOS harness picks float16 when `os_proc_available_memory()` is too small
