@@ -2,6 +2,25 @@ import Foundation
 import MLX
 import SystemOne
 
+/// The dtype d1 keeps its weights and runs its activations in.
+///
+/// The checkpoint is float32 and so is the reference. float16 halves weight
+/// memory (2.35 GB to 1.17 GB) and, per the d1-omni model card, kept the float32
+/// top answer on every text, image, and audio row it was checked on; bfloat16
+/// did not, so it is not offered. The audio mel front end, the head's logits,
+/// and calibration stay float32 either way.
+public enum D1Precision: String, Sendable, CaseIterable {
+    case float32
+    case float16
+
+    var dataType: DType {
+        switch self {
+        case .float32: return .float32
+        case .float16: return .float16
+        }
+    }
+}
+
 /// A d1-omni checkpoint validated against the exact tensor schema its
 /// configuration implies: trunk, decision head, vision tower, and audio encoder.
 public struct D1Weights: Sendable {
@@ -14,26 +33,43 @@ public struct D1Weights: Sendable {
 
     public let safetensors: SafetensorsFile
     public let configuration: D1Configuration
+    public let precision: D1Precision
 
     /// Opens a checkpoint and validates its schema without pinning its bytes.
-    public init(contentsOf url: URL, configuration: D1Configuration) throws {
-        try self.init(safetensors: SafetensorsFile(contentsOf: url), configuration: configuration)
+    public init(contentsOf url: URL, configuration: D1Configuration, precision: D1Precision = .float32) throws {
+        try self.init(safetensors: SafetensorsFile(contentsOf: url), configuration: configuration,
+                      precision: precision)
     }
 
     /// Verifies whole-file size and SHA-256 before validating the schema.
-    public init(contentsOf url: URL, pinnedTo artifact: PinnedArtifact, configuration: D1Configuration) throws {
-        try self.init(safetensors: SafetensorsFile(contentsOf: url, pinnedTo: artifact), configuration: configuration)
+    public init(
+        contentsOf url: URL,
+        pinnedTo artifact: PinnedArtifact,
+        configuration: D1Configuration,
+        precision: D1Precision = .float32
+    ) throws {
+        try self.init(safetensors: SafetensorsFile(contentsOf: url, pinnedTo: artifact), configuration: configuration,
+                      precision: precision)
     }
 
-    public init(safetensors: SafetensorsFile, configuration: D1Configuration) throws {
+    public init(safetensors: SafetensorsFile, configuration: D1Configuration, precision: D1Precision = .float32) throws {
         try safetensors.validate(schema: Self.schema(for: configuration))
         self.safetensors = safetensors
         self.configuration = configuration
+        self.precision = precision
     }
 
-    /// Copies one float32 tensor into an MLX-owned array.
+    /// The compute dtype every activation should stay in.
+    var dataType: DType { precision.dataType }
+
+    /// Copies one float32 tensor into an MLX-owned array of the compute dtype.
     func array(_ name: String) -> MLXArray {
         // The schema was validated at load, so every requested name exists.
+        safetensors.tensor(named: name)!.mlxArray(as: dataType)
+    }
+
+    /// Copies one tensor at float32, for derived weights folded before the cast.
+    func float32Array(_ name: String) -> MLXArray {
         safetensors.tensor(named: name)!.mlxArray()
     }
 

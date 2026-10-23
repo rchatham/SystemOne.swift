@@ -79,6 +79,11 @@ d1 answers are the model's softmax, with the per-type temperatures from
 For audio-only requests pass `.text("")` (or `.fields([])`); both render as the
 `{}` state the audio questions were trained on.
 
+On memory-bound devices, `SystemOneEngine.d1(modelFolder:precision: .float16)`
+halves weight memory (1.12 GB instead of 2.24 GB). It keeps the float32 top
+answer on every fixture row, with probabilities within 6e-3; see
+[docs/D1.md](docs/D1.md#float16-precision-float16).
+
 ## HTTP server
 
 MLX needs its Metal library, which SwiftPM command-line builds do not bundle,

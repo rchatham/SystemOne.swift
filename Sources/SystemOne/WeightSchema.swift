@@ -1,3 +1,4 @@
+import Accelerate
 import CryptoKit
 import Foundation
 import MLX
@@ -126,5 +127,37 @@ extension SafetensorsTensorView {
         return withUnsafeBytes { bytes in
             MLXArray(Data(bytes: bytes.baseAddress!, count: bytes.count), descriptor.shape, dtype: .float32)
         }
+    }
+
+    /// Copies this float32 tensor into an MLX-owned array of `dataType`.
+    ///
+    /// float16 is converted on the CPU, so loading a checkpoint at half
+    /// precision never holds a float32 copy in MLX memory.
+    package func mlxArray(as dataType: DType) -> MLXArray {
+        switch dataType {
+        case .float32:
+            return mlxArray()
+        case .float16:
+            precondition(descriptor.dataType == .float32, "Only float32 tensors are copied into MLX")
+            return MLXArray(withUnsafeBytes(Self.float16Bytes), descriptor.shape, dtype: .float16)
+        default:
+            preconditionFailure("Unsupported weight dtype \(dataType)")
+        }
+    }
+
+    /// IEEE float16 bytes for float32 bytes, rounding to nearest even.
+    package static func float16Bytes(_ float32: UnsafeRawBufferPointer) -> Data {
+        let count = float32.count / MemoryLayout<Float>.size
+        var half = Data(count: count * 2)
+        guard count > 0 else { return half }
+        half.withUnsafeMutableBytes { output in
+            var source = vImage_Buffer(data: UnsafeMutableRawPointer(mutating: float32.baseAddress!),
+                                       height: 1, width: vImagePixelCount(count), rowBytes: float32.count)
+            var destination = vImage_Buffer(data: output.baseAddress!, height: 1,
+                                            width: vImagePixelCount(count), rowBytes: count * 2)
+            let status = vImageConvert_PlanarFtoPlanar16F(&source, &destination, vImage_Flags(kvImageNoFlags))
+            precondition(status == kvImageNoError, "float16 conversion failed: \(status)")
+        }
+        return half
     }
 }

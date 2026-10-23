@@ -14,6 +14,12 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 - `DecisionBackend`, `PlannedRow`, and `DecisionPlan`: the extension point for
   System One models; `SystemOneEngine.d1(modelFolder:)` and
   `SystemOneEngine.von(tokenizerFolder:verifiedWeightsURL:)` factories.
+- `D1Precision`: an opt-in float16 mode for d1 (`precision:` on
+  `SystemOneEngine.d1`, `D1Backend`, and `D1Weights`) that halves weight
+  memory so d1-omni-600M fits on 4 GB iOS devices. Weights convert to float16
+  on the CPU at load; the mel front end, logits, and calibration stay float32.
+  The iOS harness picks float16 when `os_proc_available_memory()` is too small
+  for float32 and shows the loaded precision.
 - `SystemOneMedia`, `RGBImage` (including `init?(cgImage:)`), and `AudioClip`.
 - `ModelProfile`, `VonModelProfile`, and `D1ModelProfile` for model-agnostic
   HTTP admission and service metadata.

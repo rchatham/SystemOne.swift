@@ -26,6 +26,21 @@ struct ContentView: View {
 
                 Section("Engine") {
                     LabeledContent("Status", value: statusText)
+                    if let loaded = model.loadedPrecision {
+                        LabeledContent("Precision", value: loaded.rawValue)
+                    } else {
+                        Picker("Precision", selection: $model.precision) {
+                            ForEach(HarnessPrecision.allCases, id: \.self) { precision in
+                                Text(precision.label).tag(precision)
+                            }
+                        }
+                        .disabled(isBusy)
+                        if model.precision == .automatic {
+                            Text("Loads float32 with \(bytes(HarnessModel.float32RequiredBytes)) available, else float16 (half the memory, same top answers).")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     if case .failed(let message) = model.phase {
                         Text(message).font(.footnote).foregroundStyle(.red)
                     }

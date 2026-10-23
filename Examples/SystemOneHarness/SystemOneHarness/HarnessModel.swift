@@ -34,6 +34,10 @@ final class HarnessModel {
     /// Bounds MLX's reusable buffer cache so it cannot grow toward the jetsam limit.
     private static let mlxCacheLimitBytes = 64 * 1024 * 1024
 
+    /// Headroom float32 needs before load: its 3.36 GB MLX peak on a photo
+    /// request (iPhone 14 Pro) plus margin for the app's own memory.
+    static let float32RequiredBytes = 3_600 * 1_048_576
+
     private(set) var phase: Phase = .idle
     private(set) var measurements: [Measurement] = []
     private(set) var answerLines: [String] = []
@@ -48,6 +52,10 @@ final class HarnessModel {
     /// An optional extra yes/no question asked alongside the sample's.
     var customQuestion = ""
     var batching: HarnessBatching = .automatic
+    /// Defaults to `-precision float32|float16` from the launch arguments, else automatic.
+    var precision = HarnessPrecision(rawValue: UserDefaults.standard.string(forKey: "precision") ?? "") ?? .automatic
+    /// The precision the current engine was loaded at.
+    private(set) var loadedPrecision: D1Precision?
     let recorder = AudioRecorder()
 
     private var engine: SystemOneEngine?
@@ -107,12 +115,14 @@ final class HarnessModel {
     func loadEngine() async {
         phase = .loading
         let folder = modelFolder
+        let resolved = precision.resolved(availableBytes: MemoryReport.current().availableToProcess)
         let start = ContinuousClock.now
         do {
             engine = try await Task.detached(priority: .userInitiated) {
-                try await SystemOneEngine.d1(modelFolder: folder)
+                try await SystemOneEngine.d1(modelFolder: folder, precision: resolved)
             }.value
-            record("Load (verify + copy)", since: start)
+            loadedPrecision = resolved
+            record("Load \(resolved.rawValue) (verify + copy)", since: start)
             phase = .ready
         } catch {
             phase = .failed("Load failed: \(error.localizedDescription)")
@@ -179,6 +189,7 @@ final class HarnessModel {
 
     func unloadEngine() {
         engine = nil
+        loadedPrecision = nil
         MLX.Memory.clearCache()
         answerLines = []
         usage = nil
@@ -193,7 +204,8 @@ final class HarnessModel {
         func log(_ line: String) { print("[selfTest] \(line)") }
         log("available before load: \(MemoryReport.current().availableToProcess / 1_048_576) MB")
         await loadEngine()
-        guard phase == .ready else { return log("FAILED \(phase)") }
+        guard phase == .ready, let loadedPrecision else { return log("FAILED \(phase)") }
+        log("precision: \(loadedPrecision.rawValue) (\(precision.label))")
         let width = 1_200, height = 900
         var pixels = [UInt8]()
         pixels.reserveCapacity(width * height * 3)
@@ -269,6 +281,31 @@ final class HarnessModel {
         let milliseconds = Double(elapsed.components.seconds) * 1_000
             + Double(elapsed.components.attoseconds) / 1e15
         measurements.insert(Measurement(label: label, milliseconds: milliseconds), at: 0)
+    }
+}
+
+/// How the harness picks d1's precision at load.
+enum HarnessPrecision: String, CaseIterable, Hashable {
+    case automatic
+    case float32
+    case float16
+
+    var label: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .float32: "float32"
+        case .float16: "float16"
+        }
+    }
+
+    /// Automatic keeps the reference float32 when the process can hold it and
+    /// falls back to float16 (half the weight memory) on smaller devices.
+    func resolved(availableBytes: Int) -> D1Precision {
+        switch self {
+        case .automatic: availableBytes >= HarnessModel.float32RequiredBytes ? .float32 : .float16
+        case .float32: .float32
+        case .float16: .float16
+        }
     }
 }
 

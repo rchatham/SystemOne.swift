@@ -41,6 +41,15 @@ final class SafetensorsTests: XCTestCase {
         XCTAssertEqual(file.withUnsafeBytes { $0.count }, file.fileByteCount)
     }
 
+    func testFloat16BytesRoundToNearestEven() {
+        let values: [Float] = [1, -2.5, 0.1, 2_049, 2_051, 65_504, 70_000, 6e-8, 1e-8]
+        let half = values.withUnsafeBytes { SafetensorsTensorView.float16Bytes($0) }
+        let bits = half.withUnsafeBytes { Array($0.bindMemory(to: UInt16.self)) }
+        // 2049 and 2051 are ties: they round to the even neighbours 2048 and 2052.
+        XCTAssertEqual(bits, [0x3C00, 0xC100, 0x2E66, 0x6800, 0x6802, 0x7BFF, 0x7C00, 0x0001, 0x0000])
+        XCTAssertEqual([Float]().withUnsafeBytes { SafetensorsTensorView.float16Bytes($0) }.count, 0)
+    }
+
     func testTensorViewRetainsMappingAfterFileAndPathAreReleased() throws {
         let url = try makeFile(
             header: Array(singleTensorHeader(shape: "[2]", offsets: "[0,8]").utf8),

@@ -166,7 +166,7 @@ final class D1TextTests: XCTestCase {
         ProcessInfo.processInfo.environment["D1_DEVICE"] == "gpu" ? .gpu : .cpu
     }
 
-    static func loadWeights() throws -> D1Weights {
+    static func loadWeights(precision: D1Precision = .float32) throws -> D1Weights {
         let folder = try D1Fixture.modelFolder()
         guard ProcessInfo.processInfo.environment["D1_MODEL_PARITY"] == "1" else {
             throw XCTSkip("Set D1_MODEL_PARITY=1 to load the d1 weights.")
@@ -174,7 +174,8 @@ final class D1TextTests: XCTestCase {
         return try D1Weights(
             contentsOf: folder.appendingPathComponent("model.safetensors"),
             pinnedTo: D1Weights.d1Omni600MArtifact,
-            configuration: try D1Configuration(modelFolder: folder)
+            configuration: try D1Configuration(modelFolder: folder),
+            precision: precision
         )
     }
 }
