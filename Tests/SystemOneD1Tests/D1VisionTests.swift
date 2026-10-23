@@ -68,7 +68,7 @@ final class D1VisionTests: XCTestCase {
             modelID: "d1-omni-600M",
             configuration: weights.configuration,
             tokenizer: try await D1Tokenizer(modelFolder: folder),
-            model: D1Model(weights: weights),
+            model: try D1Model(weights: weights),
             logitsProvider: nil
         )
         let engine = SystemOneEngine(backend: backend)

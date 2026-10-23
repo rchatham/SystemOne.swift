@@ -122,7 +122,7 @@ final class D1TextTests: XCTestCase {
     }
 
     private func checkTrunkAndHead(_ weights: D1Weights) throws {
-        let model = D1Model(weights: weights)
+        let model = try D1Model(weights: weights)
         let fixture = try D1Fixture.load()
 
         let probe = fixture.trunkProbe

@@ -112,8 +112,10 @@ final class D1Trunk {
             let textKey = (positions.reshaped(1, length) .>= prefixColumn).expandedDimensions(axis: 1)
             let paddedKey = logicalNot(real).expandedDimensions(axis: 1)
             let isBlocked = logicalOr(paddedKey, logicalAnd(mediaQuery, textKey))
-            mask = MLX.where(isBlocked, MLXArray(Self.blocked(dataType)), MLXArray(Float(0)))
-                .asType(dataType).expandedDimensions(axis: 1)
+            // Scalars in the compute dtype, so the full mask is never built in float32.
+            mask = MLX.where(isBlocked, MLXArray(Self.blocked(dataType)).asType(dataType),
+                             MLXArray(Float(0)).asType(dataType))
+                .expandedDimensions(axis: 1)
         }
 
         var hidden = hidden

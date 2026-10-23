@@ -45,6 +45,77 @@ final class D1Float16Tests: XCTestCase {
         }
     }
 
+    /// A float16 load refuses weights float16 would turn into infinity, both raw
+    /// tensors and BatchNorm folded in float32, and still accepts values that are
+    /// only ever used in float32. Runs a tiny synthetic checkpoint.
+    func testFloat16LoadRejectsWeightsBeyondItsRange() throws {
+        guard ProcessInfo.processInfo.environment["D1_DEVICE"] == "gpu" else {
+            throw XCTSkip("Set D1_DEVICE=gpu to build MLX arrays from the Xcode test bundle.")
+        }
+        let layer = "audio.encoder.layers.0.conv.batch_norm"
+        func load(_ overrides: [String: Float], _ precision: D1Precision) throws -> D1Model {
+            let (folder, configuration) = try Self.tinyCheckpoint(overrides: overrides)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            return try D1Model(weights: D1Weights(contentsOf: folder.appendingPathComponent("model.safetensors"),
+                                                  configuration: configuration, precision: precision))
+        }
+        let raw = "encoder.layers.0.feed_forward.w1.weight"
+        XCTAssertThrowsError(try load([raw: 70_000], .float16)) { error in
+            XCTAssertEqual(error as? WeightsError, .float16Overflow(name: raw, maximumMagnitude: 70_000))
+        }
+        XCTAssertNoThrow(try load([raw: 70_000], .float32))
+        // 300 / sqrt(0 + 1e-5) ≈ 94,868: every stored value fits, the folded scale does not.
+        XCTAssertThrowsError(try load(["\(layer).weight": 300], .float16)) { error in
+            guard case .float16Overflow(let name, _) = error as? WeightsError else { return XCTFail("\(error)") }
+            XCTAssertEqual(name, "\(layer) (folded scale)")
+        }
+        // A huge running variance is only read in float32 and folds to a small scale.
+        XCTAssertNoThrow(try load(["\(layer).weight": 1, "\(layer).running_var": 1e6], .float16))
+    }
+
+    /// A d1 checkpoint with every dimension shrunk, all zeros except `overrides`
+    /// (each tensor's first element).
+    static func tinyCheckpoint(overrides: [String: Float]) throws -> (URL, D1Configuration) {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let config = #"""
+        {"max_length": 512, "image_text_length": 256, "audio_text_length": 256, "head_layers": 1,
+         "projector_hidden_size": 32, "temperatures": {}, "bos_token_id": 1, "pad_token_id": 0,
+         "text_config": {"vocab_size": 8, "hidden_size": 64, "intermediate_size": 96, "num_hidden_layers": 2,
+           "num_attention_heads": 1, "num_key_value_heads": 1, "layer_types": ["conv", "full_attention"],
+           "norm_eps": 1e-5, "conv_L_cache": 3, "block_ffn_dim_multiplier": 1.0, "block_multiple_of": 64,
+           "rope_theta": 1000000.0},
+         "vision_config": {"hidden_size": 32, "intermediate_size": 32, "layer_norm_eps": 1e-6,
+           "num_attention_heads": 1, "num_channels": 3, "num_hidden_layers": 1, "num_patches": 4, "patch_size": 16},
+         "audio_config": {"feat_in": 8, "n_layers": 1, "d_model": 16, "subsampling_conv_channels": 4,
+           "ff_expansion_factor": 1, "n_heads": 1, "conv_kernel_size": 3, "residual_width": 8}}
+        """#
+        try Data(config.utf8).write(to: folder.appendingPathComponent("config.json"))
+        let configuration = try D1Configuration(modelFolder: folder)
+
+        var entries: [String] = []
+        var payload = Data()
+        for spec in D1Weights.schema(for: configuration).sorted(by: { $0.name < $1.name }) {
+            let count = spec.shape.reduce(1, *)
+            let start = payload.count
+            if spec.dataType == .int64 {
+                payload.append(Data(count: 8 * count))
+            } else {
+                var values = [Float](repeating: 0, count: count)
+                if let value = overrides[spec.name] { values[0] = value }
+                values.withUnsafeBytes { payload.append(contentsOf: $0) }
+            }
+            entries.append(#""\#(spec.name)":{"dtype":"\#(spec.dataType.rawValue)","shape":\#(spec.shape),"data_offsets":[\#(start),\#(payload.count)]}"#)
+        }
+        var header = Array("{\(entries.joined(separator: ","))}".utf8)
+        while header.count % 8 != 0 { header.append(0x20) }
+        var file = Data((0..<8).map { UInt8(truncatingIfNeeded: UInt64(header.count) >> UInt64($0 * 8)) })
+        file.append(contentsOf: header)
+        file.append(payload)
+        try file.write(to: folder.appendingPathComponent("model.safetensors"))
+        return (folder, configuration)
+    }
+
     // MARK: Weights: needs D1_MODEL_FOLDER and D1_MODEL_PARITY=1
 
     /// Every stage stays float16: a float32 constant would silently promote and
@@ -52,7 +123,7 @@ final class D1Float16Tests: XCTestCase {
     func testActivationsStayFloat16() throws {
         let weights = try D1TextTests.loadWeights(precision: .float16)
         try Device.withDefaultDevice(D1TextTests.device) {
-            let model = D1Model(weights: weights)
+            let model = try D1Model(weights: weights)
             let fixture = try D1Fixture.load()
             let image = fixture.vision.requests[0].images[0]
             let audio = fixture.audio.requests[0].audio
@@ -138,7 +209,7 @@ final class D1Float16Tests: XCTestCase {
             modelID: "d1-omni-600M",
             configuration: weights.configuration,
             tokenizer: try await D1Tokenizer(modelFolder: try D1Fixture.modelFolder()),
-            model: D1Model(weights: weights),
+            model: try D1Model(weights: weights),
             logitsProvider: nil
         ))
     }

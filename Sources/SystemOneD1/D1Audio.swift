@@ -48,8 +48,7 @@ final class D1Audio {
     init(weights: D1Weights) {
         let configuration = weights.configuration.audio
         self.configuration = configuration
-        let dataType = weights.dataType
-        self.dataType = dataType
+        dataType = weights.dataType
         func linear(_ name: String, bias: Bool = true) -> Linear {
             Linear(weight: weights.array("\(name).weight"), bias: bias ? weights.array("\(name).bias") : nil)
         }
@@ -109,8 +108,8 @@ final class D1Audio {
                 depthwiseWeight: weights.array("\(prefix).conv.depthwise_conv.weight").transposed(0, 2, 1),
                 depthwiseBias: weights.array("\(prefix).conv.depthwise_conv.bias"),
                 pointwise2: pointwise("\(prefix).conv.pointwise_conv2"),
-                batchNormScale: scale.asType(dataType),
-                batchNormShift: shift.asType(dataType)
+                batchNormScale: weights.cast(scale, name: "\(prefix).conv.batch_norm (folded scale)"),
+                batchNormShift: weights.cast(shift, name: "\(prefix).conv.batch_norm (folded shift)")
             )
         }
         adapterNorm = norm("audio.adapter.norm")

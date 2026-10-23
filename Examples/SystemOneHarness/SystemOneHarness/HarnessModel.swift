@@ -46,6 +46,8 @@ final class HarnessModel {
     private(set) var measurements: [Measurement] = []
     private(set) var answerLines: [String] = []
     private(set) var memory = MemoryReport.current()
+    /// The MLX peak before the self-test last reset it to measure one run.
+    private var earlierPeak = 0
     private(set) var media: HarnessMedia?
     private(set) var usage: String?
 
@@ -88,7 +90,7 @@ final class HarnessModel {
     }
 
     func refreshMemory() {
-        memory = MemoryReport.current()
+        memory = MemoryReport.current(earlierPeak: earlierPeak)
     }
 
     /// Copies the four snapshot files from a user-picked folder into Documents.
@@ -241,6 +243,7 @@ final class HarnessModel {
         for (sample, attachment) in runs {
             self.sample = sample
             media = attachment
+            earlierPeak = max(earlierPeak, MLX.Memory.peakMemory)
             MLX.Memory.peakMemory = 0
             await run()
             guard phase == .ready else { return log("FAILED \(sample.label): \(phase)") }
@@ -257,11 +260,13 @@ final class HarnessModel {
 
     /// A gradient with a checkerboard, so every crop has structure.
     private static func syntheticImage(width: Int, height: Int) -> RGBImage {
-        var pixels = [UInt8]()
-        pixels.reserveCapacity(width * height * 3)
+        var pixels = [UInt8](repeating: 0, count: width * height * 3)
         for y in 0..<height {
             for x in 0..<width {
-                pixels += [UInt8(x * 255 / width), UInt8(y * 255 / height), (x / 60 + y / 60) % 2 == 0 ? 220 : 30]
+                let index = (y * width + x) * 3
+                pixels[index] = UInt8(x * 255 / width)
+                pixels[index + 1] = UInt8(y * 255 / height)
+                pixels[index + 2] = (x / 60 + y / 60) % 2 == 0 ? 220 : 30
             }
         }
         return RGBImage(width: width, height: height, pixels: pixels)
@@ -314,9 +319,12 @@ enum HarnessPrecision: String, CaseIterable, Hashable {
 
     /// Automatic keeps the reference float32 when the process can hold it and
     /// falls back to float16 (half the weight memory) on smaller devices.
+    /// `os_proc_available_memory()` is 0 when the process has no jetsam limit,
+    /// as for an iOS app on a Mac, so 0 keeps float32.
     func resolved(availableBytes: Int) -> D1Precision {
         switch self {
-        case .automatic: availableBytes >= HarnessModel.float32RequiredBytes ? .float32 : .float16
+        case .automatic:
+            availableBytes == 0 || availableBytes >= HarnessModel.float32RequiredBytes ? .float32 : .float16
         case .float32: .float32
         case .float16: .float16
         }
@@ -348,13 +356,14 @@ struct MemoryReport {
     let mlxCache: Int
     let mlxPeak: Int
 
-    static func current() -> MemoryReport {
+    /// `earlierPeak` carries the MLX peak across the self-test's per-run resets.
+    static func current(earlierPeak: Int = 0) -> MemoryReport {
         let snapshot = MLX.Memory.snapshot()
         return MemoryReport(
             availableToProcess: Int(os_proc_available_memory()),
             mlxActive: snapshot.activeMemory,
             mlxCache: snapshot.cacheMemory,
-            mlxPeak: snapshot.peakMemory
+            mlxPeak: max(snapshot.peakMemory, earlierPeak)
         )
     }
 }

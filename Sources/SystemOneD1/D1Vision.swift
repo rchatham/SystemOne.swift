@@ -102,6 +102,8 @@ final class D1Vision {
         let side = Int(Double(configuration.numPatches).squareRoot())
         positionGrid = weights.float32Array("\(tower).embeddings.position_embedding.weight")
             .reshaped(side, side, configuration.hiddenSize)
+        // Resampling takes convex combinations, so the grid bounds every crop's positions.
+        weights.checkRange(of: positionGrid, name: "\(tower).embeddings.position_embedding.weight")
         layers = (0..<configuration.numHiddenLayers).map { index in
             let prefix = "\(tower).encoder.layers.\(index)"
             return Layer(

@@ -16,10 +16,10 @@ answers, timings, and process/MLX memory.
 - Up to about 3.6 GB of MLX memory in float32 (2.24 GB of weights plus
   activations for the largest image), or 1.8 GB in float16.
   **Precision › Automatic** loads float32 when `os_proc_available_memory()`
-  reports at least 3.9 GB and float16 otherwise. Verified on an iPhone 14 Pro
-  (6 GB, 4.07 GB available) in both precisions, and on a 4 GB iPhone 13
-  (2.33 GB available), where Automatic loads float16 and the largest photo
-  leaves 1.07 GB available.
+  reports at least 3,900 MB and float16 otherwise (an iOS app on a Mac, where it
+  reports 0, keeps float32). Verified on an iPhone 14 Pro (6 GB, 4,074 MB
+  available) in both precisions, and on a 4 GB iPhone 13 (2,331 MB available),
+  where Automatic loads float16 and the largest photo leaves 1,071 MB available.
 - A paid Apple Developer team for signing. The app requests the
   `com.apple.developer.kernel.increased-memory-limit` entitlement, which
   automatic signing adds to the provisioning profile.
@@ -66,7 +66,7 @@ xcrun devicectl device process launch --device <id> --console --terminate-existi
 ```
 
 Add `-precision float32` or `-precision float16` after `-selfTest` to override
-the automatic choice. On an iPhone 14 Pro (Release, 4.07 GB available before
+the automatic choice. On an iPhone 14 Pro (Release, 4,074 MB available before
 load, warm Metal kernels):
 
 | | float32 | float16 |
@@ -83,15 +83,15 @@ load, warm Metal kernels):
 Both precisions give the same top answers; probabilities differ by under a
 percentage point. The first float16 launch after installing is slower
 (text 1.7 s, voice 0.9 s) while Metal compiles its half-precision kernels.
-On a 4 GB iPhone 13 (Release, 2.33 GB available before load), Automatic
+On a 4 GB iPhone 13 (Release, 2,331 MB available before load), Automatic
 loaded float16 and every request passed with the same answers as the 14 Pro.
 MLX peaks were the same as the 14 Pro's float16 run (1.69 GB for the
-1200×900 photo, 1.78 GB for 2560×1024), with 1.07 GB still available at the
+1200×900 photo, 1.78 GB for 2560×1024), with 1,071 MB still available at the
 end. Its timings so far come from a first launch, which includes compiling
 the Metal kernels: load 21 s, and 5.8 s for the 1200×900 photo once warm.
 
 The self-test prints each run's own MLX peak; the 2560×1024 photo (2,810
-prefix positions, near the 2,816 maximum) sets the 3.9 GB float32 threshold.
+prefix positions, near the 2,816 maximum) sets the 3,900 MB float32 threshold.
 A photo is slow because every question re-runs the trunk over the image
 prefix (about 1,800 positions for 1200×900), as the reference does.
 

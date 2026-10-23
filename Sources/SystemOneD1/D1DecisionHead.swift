@@ -86,8 +86,8 @@ final class D1DecisionHead {
         if lengths.contains(where: { $0 != length }) {
             let positions = MLXArray(0..<Int32(length)).reshaped(1, length)
             let real = positions .< MLXArray(lengths.map(Int32.init)).reshaped(batch, 1)
-            mask = MLX.where(real, MLXArray(Float(0)), MLXArray(-Float.infinity))
-                .asType(text.dtype).reshaped(batch, 1, 1, length)
+            mask = MLX.where(real, MLXArray(Float(0)).asType(text.dtype), MLXArray(-Float.infinity).asType(text.dtype))
+                .reshaped(batch, 1, 1, length)
         }
 
         for layer in layers {

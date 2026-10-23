@@ -34,6 +34,8 @@ public struct D1Weights: Sendable {
     public let safetensors: SafetensorsFile
     public let configuration: D1Configuration
     public let precision: D1Precision
+    /// The first weight float16 would turn into infinity, met while converting.
+    private let overflow = Float16Overflow()
 
     /// Opens a checkpoint and validates its schema without pinning its bytes.
     public init(contentsOf url: URL, configuration: D1Configuration, precision: D1Precision = .float32) throws {
@@ -52,11 +54,8 @@ public struct D1Weights: Sendable {
                       precision: precision)
     }
 
-    /// At float16, fails with `WeightsError.float16Overflow` when a weight lies
-    /// beyond float16's range, rather than loading it as infinity.
     public init(safetensors: SafetensorsFile, configuration: D1Configuration, precision: D1Precision = .float32) throws {
         try safetensors.validate(schema: Self.schema(for: configuration))
-        if precision == .float16 { try safetensors.validateFitsFloat16() }
         self.safetensors = safetensors
         self.configuration = configuration
         self.precision = precision
@@ -66,14 +65,40 @@ public struct D1Weights: Sendable {
     var dataType: DType { precision.dataType }
 
     /// Copies one float32 tensor into an MLX-owned array of the compute dtype.
+    /// At float16, a value float16 cannot hold is recorded for `checkFloat16Range()`.
     func array(_ name: String) -> MLXArray {
         // The schema was validated at load, so every requested name exists.
-        safetensors.tensor(named: name)!.mlxArray(as: dataType)
+        let tensor = safetensors.tensor(named: name)!
+        guard precision == .float16 else { return tensor.mlxArray() }
+        let (array, maximum) = tensor.float16Array()
+        overflow.record(name: name, maximumMagnitude: maximum)
+        return array
     }
 
     /// Copies one tensor at float32, for derived weights folded before the cast.
     func float32Array(_ name: String) -> MLXArray {
         safetensors.tensor(named: name)!.mlxArray()
+    }
+
+    /// Casts a weight derived in float32 (folded BatchNorm, say) to the compute
+    /// dtype, recording it like `array(_:)` when float16 cannot hold it.
+    func cast(_ derived: MLXArray, name: String) -> MLXArray {
+        guard precision == .float16 else { return derived }
+        checkRange(of: derived, name: name)
+        return derived.asType(.float16)
+    }
+
+    /// Records a float32 weight that is cast to float16 later, such as a
+    /// position grid resampled per image, when float16 cannot hold it.
+    func checkRange(of derived: MLXArray, name: String) {
+        guard precision == .float16 else { return }
+        overflow.record(name: name, maximumMagnitude: abs(derived).max().item(Float.self))
+    }
+
+    /// Throws `WeightsError.float16Overflow` for the first weight that would
+    /// have loaded as infinity, rather than answering with infinities.
+    func checkFloat16Range() throws {
+        if let error = overflow.first { throw error }
     }
 
     /// Every tensor name, shape, and dtype the configuration implies.
@@ -196,5 +221,20 @@ public struct D1Weights: Sendable {
         linear("audio.residual.down", audio.residualWidth, d)
         linear("audio.residual.up", d, audio.residualWidth)
         return schema
+    }
+}
+
+/// The first float16 overflow seen while one model's weights were converted.
+private final class Float16Overflow: @unchecked Sendable {
+    private let lock = NSLock()
+    private var error: WeightsError?
+
+    var first: WeightsError? { lock.withLock { error } }
+
+    func record(name: String, maximumMagnitude: Float) {
+        guard maximumMagnitude >= SafetensorsTensorView.float16OverflowMagnitude else { return }
+        lock.withLock {
+            if error == nil { error = .float16Overflow(name: name, maximumMagnitude: maximumMagnitude) }
+        }
     }
 }

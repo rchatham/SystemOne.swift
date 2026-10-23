@@ -36,7 +36,7 @@ public final class D1Backend: DecisionBackend {
             modelID: modelID,
             configuration: configuration,
             tokenizer: tokenizer,
-            model: D1Model(weights: weights),
+            model: try D1Model(weights: weights),
             logitsProvider: nil
         )
     }
