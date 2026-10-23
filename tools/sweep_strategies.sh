@@ -5,7 +5,7 @@
 # Usage:
 #   tools/sweep_strategies.sh <tokenizer_folder> <weights_path> [gpu|cpu]
 #
-# Requires compiled von-benchmark (Release) via xcodebuild.
+# Requires compiled SystemOneBenchmark (Release) via xcodebuild.
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ case "$DEVICE" in
 esac
 shift 2 || true
 
-BENCHMARK=".build/xcode-release/Build/Products/Release/von-benchmark"
+BENCHMARK=".build/xcode-release/Build/Products/Release/SystemOneBenchmark"
 if [ ! -x "$BENCHMARK" ]; then
     echo "Error: $BENCHMARK not found — run xcodebuild first."
     exit 1

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to VonSwift are documented here. The project follows
+All notable changes to SystemOne (formerly VonSwift) are documented here. The project follows
 [Semantic Versioning](https://semver.org/) and
 [Conventional Commits](https://www.conventionalcommits.org/).
 
@@ -8,10 +8,39 @@ All notable changes to VonSwift are documented here. The project follows
 
 ### Added
 
-- iOS 17 platform support for the `VonSwift` library.
-- `Examples/VonHarness`, a SwiftUI app that loads the verified weights on an
+- `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
+  `DecisionBackend`, verified against the pinned snapshot's own code with
+  `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`.
+- `DecisionBackend`, `PlannedRow`, and `DecisionPlan`: the extension point for
+  System One models; `SystemOneEngine.d1(modelFolder:)` and
+  `SystemOneEngine.von(tokenizerFolder:verifiedWeightsURL:)` factories.
+- `SystemOneMedia`, `RGBImage` (including `init?(cgImage:)`), and `AudioClip`.
+- `ModelProfile`, `VonModelProfile`, and `D1ModelProfile` for model-agnostic
+  HTTP admission and service metadata.
+- Shared `WeightSpecification`, `PinnedArtifact`, and `WeightsError`; I64
+  safetensors tensors; torch-exact `AntialiasedResize` and Slaney
+  `MelFilterbank`.
+- `system-one serve --model-folder` serves d1.
+- The iOS harness runs d1 on device with photo-library, camera, and
+  microphone input, plus a `-selfTest` launch mode; verified on an iPhone 14 Pro.
+- iOS 17 platform support for the library.
+- `Examples/SystemOneHarness` (formerly `VonHarness`), a SwiftUI app that loads the verified weights on an
   iPhone or iPad and reports `systemOne` answers, latency, and memory.
 - CI build of the harness for generic iOS devices.
+
+### Changed
+
+- **Breaking:** the package is now `SystemOne`. Modules: `SystemOne` (core),
+  `SystemOneVon`, `SystemOneD1`, `SystemOneHTTP`; the executable is
+  `system-one`. `VonEngine` → `SystemOneEngine`, `VonState` →
+  `SystemOneState`, `VonStateField` → `StateField`, `VonBatchingStrategy` →
+  `BatchingStrategy`, `VonEngineError` → `SystemOneEngineError`,
+  `VonHTTPServer` → `SystemOneHTTPServer`, `VonWireCodec` →
+  `SystemOneWireCodec` (now takes a `profile:`), `VonCORSConfiguration` →
+  `CORSConfiguration`, `VonWeightsError` → `WeightsError`.
+- **Breaking:** `VON_API_KEY` / `VON_CORS_ORIGINS` are now `SYSTEMONE_API_KEY`
+  / `SYSTEMONE_CORS_ORIGINS`.
+- The engine resolves each question as soon as its rows finish, for every model.
 
 ## [0.1.0] - 2026-10-20
 

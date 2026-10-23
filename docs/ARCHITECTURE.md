@@ -1,4 +1,46 @@
-# Von Architecture (reference map for the Swift port)
+# Architecture
+
+## The shared engine
+
+`SystemOne` is model-agnostic. A model plugs in as a `DecisionBackend`:
+
+```swift
+public protocol DecisionBackend: AnyObject {
+    associatedtype Row: PlannedRow            // sequenceLength, logitCount
+    var modelID: String { get }
+    func plan(_ request: SystemOneRequest, media: SystemOneMedia?) throws -> DecisionPlan<Row>
+    func microbatches(for rows: [Row], strategy: BatchingStrategy) -> [[Int]]  // default provided
+    func logits(for rows: [Row]) async throws -> BatchLogitsOutput
+}
+```
+
+`SystemOneEngine` (an actor) runs every request the same way:
+
+1. Validate model-independent invariants (unique question ids, state keys,
+   choice keys; non-empty criteria).
+2. `plan`: the backend packs every forward pass up front and attaches to each
+   question a `resolve` closure holding its calibration. Invalid input fails
+   here, before any forward runs.
+3. Group rows into microbatches (default: length-sorted with the bounded
+   `B × L²` policy in [PERFORMANCE.md](PERFORMANCE.md)).
+4. For each microbatch: check cancellation, run `logits`, check row offsets,
+   then resolve every question whose rows are complete, in plan order. A
+   postprocessing failure stops before later microbatches run.
+
+Shared building blocks: `SafetensorsFile` (F32/I64, strict layout) with
+`WeightSpecification` schemas and `PinnedArtifact` size + SHA-256 pins,
+`SafetensorsTensorView.mlxArray()`, `PythonSemantics` (CPython `str.strip`,
+`len`, `json.dumps` strings), `AntialiasedResize` (ATen's uint8 and float
+antialiased bilinear), `MelFilterbank` (librosa Slaney), and `ModelProfile`,
+which lets the HTTP codec bound a request's work before inference without
+loading weights.
+
+| Backend | Rows | Notes |
+|---|---|---|
+| `VonBackend` | 1 per question (+1 null pass for default Noul) | below |
+| `D1Backend` | 1 per question, sharing one media prefix | [D1.md](D1.md) |
+
+# von backend
 
 Everything in this doc is verified against von source revision
 `6c3c095d03ce78a546cb197df490be9a56c1ad3e` (Apache-2.0) and local
@@ -282,8 +324,8 @@ absolute errors are `9.536743e-7` / `2.861023e-6` (isolated scorer CPU/GPU),
 
 ## Phase 6 public Swift API
 
-`VonEngine` is an actor and the only high-level production owner of the
-`VonTokenizer` and `VonOptionMarkerModel`. Its async initializer accepts an
+`VonBackend` is the only high-level production owner of the
+`VonTokenizer` and `VonOptionMarkerModel`, driven by `SystemOneEngine`. Its async initializer accepts an
 explicit tokenizer folder and a verified production safetensors URL; no model
 name resolution, network fallback, or HTTP exists. `systemOne` uses a two-phase
 plan-then-execute pipeline with bounded, stable microbatch fan-out (see
@@ -293,7 +335,7 @@ to `VonDecisionMath`.
 
 The public `Choice`, `Noul`, `Score`, `Question`, answer, request, response, and
 usage models are typed `Codable & Sendable` values. All inference-significant
-collections are ordered arrays: `VonStateField`, `ChoiceOption`, and
+collections are ordered arrays: `StateField`, `ChoiceOption`, and
 `QuestionEntry`. Codable request and response output retains Python's keyed
 object shapes and adds explicit order metadata (`state_order`, `question_order`,
 `criteria_order`, `answer_order`, `probability_order`, and `legend_order`);
@@ -303,7 +345,7 @@ are ignored by Python's Pydantic defaults. Phase 7 supplies a separate
 order-preserving parser for raw Python requests and responses that lack this
 metadata.
 
-`VonBatchingStrategy` is a method parameter on `systemOne` (`.sequential` /
+`BatchingStrategy` is a method parameter on `systemOne` (`.sequential` /
 `.automatic` / `.batched`). It is not serialized, not on the HTTP wire, and
 not part of `SystemOneRequest`. The default is `.automatic`. See
 [docs/PERFORMANCE.md](PERFORMANCE.md) for the microbatch policy and benchmarks.
@@ -330,9 +372,9 @@ rounded outputs pass through the production model on Xcode MLX CPU and GPU.
 
 ## Phase 8 bounded microbatch fan-out
 
-`VonEngine.systemOne` pre-plans every inference row (primary + default-Noul null
+`SystemOneEngine.systemOne` pre-plans every inference row (primary + default-Noul null
 passes) before any forward pass. Rows are sorted by descending sequence length
-and greedily binned into microbatches by `VonEngine.microbatchIndices`.
+and greedily binned into microbatches by `SystemOneEngine.microbatchIndices`.
 
 ### Microbatch policy
 
@@ -374,9 +416,9 @@ and may co-batch with the primary row if lengths are compatible.
 
 ## Phase 7 HTTP boundary
 
-`VonHTTP` separates raw wire compatibility from Phase 6's typed Codable
+`SystemOneHTTP` separates raw wire compatibility from Phase 6's typed Codable
 contract. `OrderedJSON` parses and serializes objects without losing insertion
-order or permitting duplicate keys. `VonWireCodec` converts metadata-free
+order or permitting duplicate keys. `SystemOneWireCodec` converts metadata-free
 Python requests into ordered Swift types and emits successful responses in the
 same field/object order as pinned Python `von serve`; no `_order` metadata or
 Swift keyed-container iteration participates in this path.
@@ -395,17 +437,17 @@ GET payloads match ordered Python response bytes. Rejected inputs compare by
 HTTP status category because Swift sanitizes errors and intentionally accepts a
 narrower input language.
 
-`VonHTTPServer` is a bounded SwiftNIO HTTP/1.1 shell: raw/decoded metadata and
+`SystemOneHTTPServer` is a bounded SwiftNIO HTTP/1.1 shell: raw/decoded metadata and
 body budgets, connection/request/inference admission caps, absolute header/body/
 request deadlines, idle timeout, timing-safe Bearer auth, and bounded graceful
 shutdown. It emits `100 Continue` only after authentication, declared body
 length/size, and request-admission checks; unsupported expectations receive 417
-without waiting for a body. Authentication is enabled by `VON_API_KEY`; a
-non-loopback bind without a key fails closed. CORS is disabled unless `VON_CORS_ORIGINS` supplies
+without waiting for a body. Authentication is enabled by `SYSTEMONE_API_KEY`; a
+non-loopback bind without a key fails closed. CORS is disabled unless `SYSTEMONE_CORS_ORIGINS` supplies
 an explicit allowlist. This intentionally differs from Python's wildcard CORS
 default, and wildcard origins are rejected.
 
-The `von serve` executable requires explicit `--port`, `--tokenizer`, and
+The `system-one serve` executable requires explicit `--port`, `--tokenizer`, and
 `--weights`, defaults only to loopback host `127.0.0.1`, validates local files,
 and installs SIGINT/SIGTERM shutdown handling. Opt-in live parity uses an
 external pinned Python server URL and starts Swift only on `127.0.0.1:0`;

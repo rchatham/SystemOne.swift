@@ -1,4 +1,4 @@
-# VonSwift Plan
+# SystemOne Plan
 
 Step-by-step plan for porting [wfzyx/von](https://github.com/wfzyx/von) (the
 "System One" non-autoregressive decision model) to Swift + MLX, verified at
@@ -15,7 +15,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for how von actually works and
 | ML backend | `ml-explore/mlx-swift` | Native Apple Silicon, Swift-native API |
 | Weights | von's released `wfzyx/von` checkpoint (1.58 GB float32) | Inference port first; training is out of scope for now |
 | Parity strategy | Golden test vectors generated from Python von | Hard numeric targets for tokenizer, backbone, head, end-to-end |
-| Tokenizer | `huggingface/swift-transformers` `Tokenizers` product pinned to 1.1.6, wrapped by VonSwift | Exact parity is verified; local-folder loading avoids a network API |
+| Tokenizer | `huggingface/swift-transformers` `Tokenizers` product pinned to 1.1.6, wrapped by SystemOne | Exact parity is verified; local-folder loading avoids a network API |
 | Reference oracle | Python von in `.venv` (repo-local, gitignored) + source clone at `~/Developer/von` | Lets us run and diff against the real thing at any step |
 
 ## Phases
@@ -54,7 +54,7 @@ python3 -m unittest discover -s Tests -p 'test_*.py'
 ### Phase 2 — Tokenizer in Swift ✅ DONE
 - [x] Pin `swift-transformers` 1.1.6 and load its `Tokenizers` implementation
       only from an explicit local model folder
-- [x] Add a VonSwift-owned tokenizer wrapper for encode, Python-compatible
+- [x] Add a SystemOne-owned tokenizer wrapper for encode, Python-compatible
       state token counts, exact `pack_sequence`, and packed model inputs
 - [x] Special tokens: tokenizer CLS 50281, SEP 50282, PAD 50283, mask 50284;
       tokenizer BOS/EOS are `None` (only model config ids alias CLS/SEP)
@@ -129,7 +129,7 @@ production artifact hash, schema, and per-tensor payload-hash integration test.
 - [x] Score: expected value Σ i·pᵢ with nearest-even production rounding
 
 ### Phase 6 — Public API ✅ DONE
-- [x] Public local-only `VonEngine` actor with async verified tokenizer/weight initialization
+- [x] Public local-only `SystemOneEngine` actor with async verified tokenizer/weight initialization
 - [x] Sequential `decide`, `judge`, `rate`, and `systemOne` over ordered state fields, options, and questions
 - [x] Codable + Sendable Choice / Noul / Score requests and typed Python-keyed answers
 - [x] Exact Python rendering/truthiness, including partial Noul criteria and Choice fallback edge cases
@@ -149,7 +149,7 @@ production artifact hash, schema, and per-tensor payload-hash integration test.
 ### Phase 8 — Performance ✅ DONE
 - [x] Latency benchmark vs Python von on MPS (see [PERFORMANCE.md](PERFORMANCE.md))
 - [x] Single-pass multi-question fan-out (`system_one` semantics) with bounded, stable microbatch batching
-- [x] `VonBatchingStrategy` (`.sequential` / `.automatic` / `.batched`), method parameter only, not HTTP wire
+- [x] `BatchingStrategy` (`.sequential` / `.automatic` / `.batched`), method parameter only, not HTTP wire
 - [x] Absolute B×L² ≤ 1,048,576 guard and amplification ceilings (auto 1.5×, batched 2.0×)
 - [x] Right-padded batch forward with flattened variable marker scorer
 - [x] Padded query self-attention isolation (padded queries see only themselves)
@@ -157,6 +157,25 @@ production artifact hash, schema, and per-tensor payload-hash integration test.
 - [x] Public engine rounded parity GPU passed
 - [x] Cancellation support interspersed at batch boundaries
 - [x] Release Xcode benchmark harness (diagnostic only; results not committed)
+
+### Phase 9 — SystemOne: multi-model core + d1-omni ✅ DONE
+
+- [x] Rename the package to SystemOne; split `SystemOne` (core), `SystemOneVon`,
+      `SystemOneHTTP`, and the `system-one` CLI
+- [x] `DecisionBackend` extension point; von behind `VonBackend` with all
+      existing tests passing
+- [x] Shared weight schemas and pins, I64 safetensors, `ModelProfile` for the
+      HTTP boundary, `SystemOneMedia`
+- [x] `tools/d1_golden_capture.py` oracle for LiquidAI/d1-omni-600M
+- [x] d1 tokenizer, prompt encoding, LFM2.5 trunk, decision head (exact ids;
+      logits within 5.8e-5 on GPU)
+- [x] d1 vision: torch-exact crops, SigLIP2 tower, projector
+- [x] d1 audio: mel front end, FastConformer, adapter
+- [x] `system-one serve --model-folder` serves d1 over HTTP
+
+Open follow-ups: d1's own microbatch policy (flat token budget), media over
+HTTP, the iOS harness on d1, d1 benchmarks, and training/fine-tuning support
+(`D1Backend` already accepts unpinned checkpoints with `artifact: nil`).
 
 ## Acceptance criteria (overall)
 

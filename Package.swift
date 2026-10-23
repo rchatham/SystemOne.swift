@@ -2,15 +2,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "VonSwift",
+    name: "SystemOne",
     platforms: [
         .macOS(.v14),
         .iOS(.v17),
     ],
     products: [
-        .library(name: "VonSwift", targets: ["VonSwift"]),
-        .library(name: "VonHTTP", targets: ["VonHTTP"]),
-        .executable(name: "von", targets: ["von"]),
+        .library(name: "SystemOne", targets: ["SystemOne"]),
+        .library(name: "SystemOneVon", targets: ["SystemOneVon"]),
+        .library(name: "SystemOneD1", targets: ["SystemOneD1"]),
+        .library(name: "SystemOneHTTP", targets: ["SystemOneHTTP"]),
+        .executable(name: "system-one", targets: ["SystemOneCLI"]),
     ],
     dependencies: [
         .package(
@@ -32,7 +34,7 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "VonSwift",
+            name: "SystemOne",
             dependencies: [
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "MLX", package: "mlx-swift"),
@@ -41,9 +43,31 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
-            name: "VonHTTP",
+            name: "SystemOneVon",
             dependencies: [
-                "VonSwift",
+                "SystemOne",
+                .product(name: "Tokenizers", package: "swift-transformers"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "SystemOneD1",
+            dependencies: [
+                "SystemOne",
+                .product(name: "Hub", package: "swift-transformers"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFFT", package: "mlx-swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "SystemOneHTTP",
+            dependencies: [
+                "SystemOne",
                 .product(name: "JSON", package: "JSON.swift"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
@@ -52,23 +76,29 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
-            name: "von",
-            dependencies: ["VonSwift", "VonHTTP"],
+            name: "SystemOneCLI",
+            dependencies: ["SystemOne", "SystemOneVon", "SystemOneD1", "SystemOneHTTP"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
-            name: "VonBenchmark",
+            name: "SystemOneBenchmark",
             dependencies: [
-                "VonSwift",
+                "SystemOne",
+                "SystemOneVon",
                 .product(name: "MLX", package: "mlx-swift"),
             ],
-            path: "Sources/VonBenchmark",
+                        swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "SystemOneTests",
+            dependencies: ["SystemOne"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
-            name: "VonSwiftTests",
+            name: "SystemOneVonTests",
             dependencies: [
-                "VonSwift",
+                "SystemOne",
+                "SystemOneVon",
                 .product(name: "MLX", package: "mlx-swift"),
             ],
             resources: [
@@ -77,10 +107,21 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
-            name: "VonHTTPTests",
+            name: "SystemOneD1Tests",
             dependencies: [
-                "VonHTTP",
-                "VonSwift",
+                "SystemOne",
+                "SystemOneD1",
+                .product(name: "MLX", package: "mlx-swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "SystemOneHTTPTests",
+            dependencies: [
+                "SystemOneHTTP",
+                "SystemOne",
+                "SystemOneVon",
+                "SystemOneD1",
                 .product(name: "JSON", package: "JSON.swift"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),

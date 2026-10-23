@@ -10,7 +10,7 @@ mkdir -p "$results_dir"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 iterations="${VON_BENCH_ITERATIONS:-30}"
 warmup="${VON_BENCH_WARMUP:-3}"
-tokenizer_path="Tests/VonSwiftTests/Resources/Tokenizer"
+tokenizer_path="Tests/SystemOneVonTests/Resources/Tokenizer"
 weights_path="weights/option_marker.safetensors"
 
 red="$(tput setaf 1 2>/dev/null || echo '')"
@@ -58,16 +58,16 @@ fi
 # ── Swift benchmark (Release xcodebuild) ──────────────────────────────
 echo ""
 echo "--- Swift build (Release) ---"
-swift_bin="$repo_root/.build/xcode-release/Build/Products/Release/von-benchmark"
+swift_bin="$repo_root/.build/xcode-release/Build/Products/Release/SystemOneBenchmark"
 
 if xcodebuild build \
-    -scheme von-benchmark \
+    -scheme SystemOneBenchmark \
     -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath "$repo_root/.build/xcode-release" \
     -configuration Release >/dev/null 2>&1; then
-  ok "Swift von-benchmark (Release) built"
+  ok "Swift SystemOneBenchmark (Release) built"
 else
-  fail "Swift von-benchmark build failed"
+  fail "Swift SystemOneBenchmark build failed"
 fi
 
 for strategy in sequential automatic batched; do

@@ -1,4 +1,4 @@
-# VonSwift Performance
+# SystemOne Performance (von)
 
 Phase 8 latency benchmarks and batching architecture. All Swift numbers are
 from the Release Xcode-built test bundle on an Apple M4 Max (64 GB RAM,
@@ -72,7 +72,7 @@ reference, not a supported API.
 
 ### Two-phase plan-then-execute
 
-`VonEngine.systemOne` pre-plans every inference row before any forward pass:
+`SystemOneEngine.systemOne` pre-plans every inference row before any forward pass:
 
 1. **Plan** — render state, options, and criteria; pack each question's primary
    row (and null-state row for default Noul); record expected logit counts.
@@ -85,7 +85,7 @@ and lets the model amortise attention over multiple rows.
 
 ### Microbatch policy
 
-`VonEngine.microbatchIndices` sorts by descending sequence length, then
+`SystemOneEngine.microbatchIndices` sorts by descending sequence length, then
 greedily fills each batch while satisfying two guards:
 
 - **Absolute**: `rows × max(L²) ≤ 1,048,576`. This caps the right-padded
@@ -115,7 +115,7 @@ marker representations.
 
 ### Strategy selection
 
-`VonBatchingStrategy` is a **method parameter only** on `systemOne`:
+`BatchingStrategy` is a **method parameter only** on `systemOne`:
 
 ```swift
 let answer = try await engine.systemOne(
@@ -156,14 +156,14 @@ executable (the Metal library is not packaged by plain `swift run`):
 
 ```bash
 xcodebuild build \
-  -scheme von-benchmark \
+  -scheme SystemOneBenchmark \
   -destination 'platform=macOS,arch=arm64' \
   -configuration Release \
   -derivedDataPath "$PWD/.build/xcode-release"
 
 # Heterogeneous benchmark (30 iterations, 3 warmup)
-.build/xcode-release/Build/Products/Release/von-benchmark \
-  --tokenizer Tests/VonSwiftTests/Resources/Tokenizer \
+.build/xcode-release/Build/Products/Release/SystemOneBenchmark \
+  --tokenizer Tests/SystemOneVonTests/Resources/Tokenizer \
   --weights weights/option_marker.safetensors \
   --device gpu --strategy automatic --workload fixture \
   --iterations 30 --warmup 3
@@ -180,6 +180,6 @@ measures homogeneous 4/8/16-question workloads.
 
 The ordered bounded JSON parser used by `VonHTTP` was upstreamed locally on
 the JSON.swift feature branch at commit
-`dddbe8b12e72ab4a0efc0b537ad08b8574a23896`. VonSwift deliberately retains its
+`dddbe8b12e72ab4a0efc0b537ad08b8574a23896`. SystemOne deliberately retains its
 current parser until a remote release or tag exists; it does not depend on
 that branch.

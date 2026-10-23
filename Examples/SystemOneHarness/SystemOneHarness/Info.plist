@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record a short voice clip for the decision model to answer questions about. Audio stays on this device.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo for the decision model to answer questions about. Photos stay on this device.</string>
+</dict>
+</plist>
