@@ -143,6 +143,9 @@ von's installation, conversion, and parity commands are in
 
 ## License
 
-SystemOne is licensed under the Apache License 2.0 (see `LICENSE`). Model
-weights are never committed: von's are Apache-2.0, d1-omni's are under the LFM
-Open License v1.0. Attribution is in `THIRD_PARTY_NOTICES.md`.
+SystemOne is licensed under the Apache License 2.0 (see `LICENSE`), except
+`SystemOneD1`, a port of d1-omni's reference code, which is under the
+[LFM Open License v1.0](LICENSES/LFM-Open-License-1.0.txt) and limits
+commercial use by entities with $10M or more in annual revenue. Model weights
+are never committed: von's are Apache-2.0, d1-omni's are under the LFM Open
+License v1.0. Attribution is in `THIRD_PARTY_NOTICES.md`.

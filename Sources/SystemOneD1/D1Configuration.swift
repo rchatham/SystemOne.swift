@@ -1,3 +1,7 @@
+// Swift port of LiquidAI/d1-omni-600M reference code, translated and modified
+// from the original Python. Licensed under the LFM Open License v1.0; see
+// LICENSES/LFM-Open-License-1.0.txt.
+
 import Foundation
 
 /// `config.json` of a d1-omni checkpoint. Shapes, layer order, context limits,

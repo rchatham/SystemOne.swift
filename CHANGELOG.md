@@ -42,6 +42,14 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   / `SYSTEMONE_CORS_ORIGINS`.
 - The engine resolves each question as soon as its rows finish, for every model.
 
+### Licensing
+
+- `SystemOneD1` is a port of d1-omni's reference code and is distributed under
+  the LFM Open License v1.0 (`LICENSES/LFM-Open-License-1.0.txt`), which limits
+  commercial use by entities with $10M or more in annual revenue. All other
+  modules remain Apache-2.0.
+- The repository moved to `rchatham/SystemOne.swift`.
+
 ## [0.1.0] - 2026-10-20
 
 Initial release. A native Swift + MLX implementation of the
@@ -81,4 +89,4 @@ against the Python reference at every stage.
 - Apache-2.0 with attribution in `THIRD_PARTY_NOTICES.md`. Model weights are
   user-generated via `tools/download_model.py` + `tools/convert_option_marker.py`.
 
-[0.1.0]: https://github.com/rchatham/von.swift/releases/tag/0.1.0
+[0.1.0]: https://github.com/rchatham/SystemOne.swift/releases/tag/0.1.0
