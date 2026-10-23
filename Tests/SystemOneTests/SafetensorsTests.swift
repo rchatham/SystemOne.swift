@@ -50,6 +50,19 @@ final class SafetensorsTests: XCTestCase {
         XCTAssertEqual([Float]().withUnsafeBytes { SafetensorsTensorView.float16Bytes($0) }.count, 0)
     }
 
+    func testValidateFitsFloat16RejectsValuesThatWouldBecomeInfinity() throws {
+        func file(_ values: [Float]) throws -> SafetensorsFile {
+            var header = Array(#"{"w":{"dtype":"F32","shape":[\#(values.count)],"data_offsets":[0,\#(values.count * 4)]}}"#.utf8)
+            while header.count % 8 != 0 { header.append(0x20) }
+            return try SafetensorsFile(contentsOf: makeFile(header: header, payload: values.withUnsafeBytes { Array($0) }))
+        }
+        // 65519 still rounds down to float16's largest finite value, 65504.
+        XCTAssertNoThrow(try file([1, -65_519, 0.5]).validateFitsFloat16())
+        XCTAssertThrowsError(try file([1, -65_520, 0.5]).validateFitsFloat16()) { error in
+            XCTAssertEqual(error as? WeightsError, .float16Overflow(name: "w", maximumMagnitude: 65_520))
+        }
+    }
+
     func testTensorViewRetainsMappingAfterFileAndPathAreReleased() throws {
         let url = try makeFile(
             header: Array(singleTensorHeader(shape: "[2]", offsets: "[0,8]").utf8),

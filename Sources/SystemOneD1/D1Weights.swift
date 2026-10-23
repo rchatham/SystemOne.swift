@@ -5,7 +5,7 @@ import SystemOne
 /// The dtype d1 keeps its weights and runs its activations in.
 ///
 /// The checkpoint is float32 and so is the reference. float16 halves weight
-/// memory (2.35 GB to 1.17 GB) and, per the d1-omni model card, kept the float32
+/// memory in MLX (2.24 GB to 1.12 GB) and, per the d1-omni model card, kept the float32
 /// top answer on every text, image, and audio row it was checked on; bfloat16
 /// did not, so it is not offered. The audio mel front end, the head's logits,
 /// and calibration stay float32 either way.
@@ -52,8 +52,11 @@ public struct D1Weights: Sendable {
                       precision: precision)
     }
 
+    /// At float16, fails with `WeightsError.float16Overflow` when a weight lies
+    /// beyond float16's range, rather than loading it as infinity.
     public init(safetensors: SafetensorsFile, configuration: D1Configuration, precision: D1Precision = .float32) throws {
         try safetensors.validate(schema: Self.schema(for: configuration))
+        if precision == .float16 { try safetensors.validateFitsFloat16() }
         self.safetensors = safetensors
         self.configuration = configuration
         self.precision = precision

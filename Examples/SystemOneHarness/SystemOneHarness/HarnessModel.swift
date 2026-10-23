@@ -34,9 +34,13 @@ final class HarnessModel {
     /// Bounds MLX's reusable buffer cache so it cannot grow toward the jetsam limit.
     private static let mlxCacheLimitBytes = 64 * 1024 * 1024
 
-    /// Headroom float32 needs before load: its 3.36 GB MLX peak on a photo
-    /// request (iPhone 14 Pro) plus margin for the app's own memory.
-    static let float32RequiredBytes = 3_600 * 1_048_576
+    /// Headroom float32 needs before load. On an iPhone 14 Pro the largest image
+    /// prefix (2560×1024: 5×2 tiles plus a thumbnail, 2,810 of at most 2,816
+    /// positions; the `-selfTest` run) peaks at 3,569 MB of MLX memory with
+    /// automatic batching, and the app adds about 135 MB; 3,900 MB leaves about
+    /// 200 MB of margin. Text states of thousands of tokens can exceed it: the
+    /// trunk accepts up to 16,384 positions.
+    static let float32RequiredBytes = 3_900 * 1_048_576
 
     private(set) var phase: Phase = .idle
     private(set) var measurements: [Measurement] = []
@@ -206,18 +210,13 @@ final class HarnessModel {
         await loadEngine()
         guard phase == .ready, let loadedPrecision else { return log("FAILED \(phase)") }
         log("precision: \(loadedPrecision.rawValue) (\(precision.label))")
-        let width = 1_200, height = 900
-        var pixels = [UInt8]()
-        pixels.reserveCapacity(width * height * 3)
-        for y in 0..<height {
-            for x in 0..<width {
-                pixels += [UInt8(x * 255 / width), UInt8(y * 255 / height), (x / 60 + y / 60) % 2 == 0 ? 220 : 30]
-            }
-        }
         // Exercise the same decode paths as the photo picker and the recorder:
         // a UIImage through RGBImage(photo:), and WAV files through D1AudioFormat.
-        let synthetic = RGBImage(width: width, height: height, pixels: pixels)
+        let synthetic = Self.syntheticImage(width: 1_200, height: 900)
         let photo = UIImage(cgImage: synthetic.cgImage)
+        // 5×2 tiles plus a thumbnail: 2,810 prefix positions, near the 2,816
+        // maximum, so this run sets the memory bound `float32RequiredBytes` uses.
+        let largest = Self.syntheticImage(width: 2_560, height: 1_024)
         guard let image = RGBImage(photo: photo),
               image == synthetic
         else { return log("FAILED photo round trip") }
@@ -234,6 +233,7 @@ final class HarnessModel {
                 // Again, once Metal kernels for these shapes are compiled.
                 (.photo, .image(preview: photo, image: image)),
                 (.voice, .audio(seconds: 3, clip: clip)),
+                (.photo, .image(preview: UIImage(cgImage: largest.cgImage), image: largest)),
             ]
         } catch {
             return log("FAILED audio decode: \(error)")
@@ -241,16 +241,30 @@ final class HarnessModel {
         for (sample, attachment) in runs {
             self.sample = sample
             media = attachment
+            MLX.Memory.peakMemory = 0
             await run()
             guard phase == .ready else { return log("FAILED \(sample.label): \(phase)") }
-            log("\(sample.label): \(answerLines.joined(separator: " | ")) [\(usage ?? "")]")
+            let peak = MLX.Memory.peakMemory / 1_048_576
+            log("\(sample.label): \(answerLines.joined(separator: " | ")) [\(usage ?? ""); MLX peak \(peak) MB]")
         }
         for measurement in measurements.reversed() {
             log("\(measurement.label): \(Int(measurement.milliseconds)) ms")
         }
         let memory = MemoryReport.current()
-        log("MLX active \(memory.mlxActive / 1_048_576) MB, peak \(memory.mlxPeak / 1_048_576) MB, available \(memory.availableToProcess / 1_048_576) MB")
+        log("MLX active \(memory.mlxActive / 1_048_576) MB, available \(memory.availableToProcess / 1_048_576) MB")
         log("PASSED")
+    }
+
+    /// A gradient with a checkerboard, so every crop has structure.
+    private static func syntheticImage(width: Int, height: Int) -> RGBImage {
+        var pixels = [UInt8]()
+        pixels.reserveCapacity(width * height * 3)
+        for y in 0..<height {
+            for x in 0..<width {
+                pixels += [UInt8(x * 255 / width), UInt8(y * 255 / height), (x / 60 + y / 60) % 2 == 0 ? 220 : 30]
+            }
+        }
+        return RGBImage(width: width, height: height, pixels: pixels)
     }
 
     /// Writes a 3 s 220 Hz tone as 16-bit PCM WAV.

@@ -18,6 +18,33 @@ final class D1Float16Tests: XCTestCase {
         XCTAssertEqual(D1Trunk.blocked(.float16), -65_504)
     }
 
+    /// `mlxArray(as: .float16)` hands MLX a page-aligned buffer. Metal must wrap
+    /// it in place (the finalizer runs only when the array is freed), not copy
+    /// it, even when the length is not a whole number of pages.
+    func testPageAlignedBufferIsWrappedWithoutACopy() throws {
+        guard ProcessInfo.processInfo.environment["D1_DEVICE"] == "gpu" else { throw XCTSkip("Set D1_DEVICE=gpu to check Metal buffer wrapping.") }
+        let page = Int(getpagesize())
+        for byteCount in [page, 1_000, 3 * page + 6] {
+            var buffer: UnsafeMutableRawPointer?
+            XCTAssertEqual(posix_memalign(&buffer, page, (byteCount + page - 1) / page * page), 0)
+            memset(buffer, 0, byteCount)
+            var released = false
+            var array: MLXArray? = MLXArray(rawPointer: buffer!, [byteCount / 2], dtype: .float16) {
+                released = true
+                free(buffer)
+            }
+            XCTAssertFalse(released, "\(byteCount) bytes were copied instead of wrapped")
+            XCTAssertEqual(array!.sum().item(Float.self), 0)
+            array = nil
+            // Metal may hold the buffer until in-flight command buffers complete.
+            Stream.gpu.synchronize()
+            let deadline = Date().addingTimeInterval(2)
+            while !released && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+            print("\(byteCount) bytes released: \(released)")
+            XCTAssertTrue(released, "\(byteCount) bytes were not released with the array")
+        }
+    }
+
     // MARK: Weights: needs D1_MODEL_FOLDER and D1_MODEL_PARITY=1
 
     /// Every stage stays float16: a float32 constant would silently promote and

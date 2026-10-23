@@ -13,11 +13,12 @@ answers, timings, and process/MLX memory.
   GPU features the iOS Simulator does not provide, so inference cannot run
   there. For development on a Mac, pick the **My Mac (Designed for iPad)**
   destination.
-- About 3.4 GB of memory at peak in float32 (2.24 GB of weights plus
-  activations), or 1.7 GB in float16. **Precision › Automatic** loads float32
-  when `os_proc_available_memory()` reports at least 3.6 GB and float16
-  otherwise, so 4 GB devices such as the iPhone 13 get float16. Verified on an
-  iPhone 14 Pro (6 GB) in both precisions.
+- Up to about 3.6 GB of MLX memory in float32 (2.24 GB of weights plus
+  activations for the largest image), or 1.8 GB in float16.
+  **Precision › Automatic** loads float32 when `os_proc_available_memory()`
+  reports at least 3.9 GB and float16 otherwise. Verified on an iPhone 14 Pro
+  (6 GB, 4.07 GB available) in both precisions; 4 GB devices such as the
+  iPhone 13 should get float16 and fit, but have not been measured yet.
 - A paid Apple Developer team for signing. The app requests the
   `com.apple.developer.kernel.increased-memory-limit` entitlement, which
   automatic signing adds to the provisioning profile.
@@ -69,18 +70,22 @@ load, warm Metal kernels):
 
 | | float32 | float16 |
 |---|---|---|
-| Load (verify + copy) | 7.3 s | 6.7 s |
+| Load (verify + copy) | 7.3–9.2 s | 6.7–8.4 s |
 | Text, three questions | 0.35 s | 0.27 s |
-| Photo, three questions | 5.0 s | 3.8 s |
+| Photo 1200×900, three questions | 5.0 s | 3.8 s |
 | 3 s voice clip | 0.32 s | 0.21 s |
-| MLX active / peak | 2.24 / 3.36 GB | 1.12 / 1.68 GB |
-| Available after the run | 1.7 GB | 2.8 GB |
+| Photo 2560×1024 (largest prefix), three questions | 8.4 s | 6.0 s |
+| MLX active | 2.24 GB | 1.12 GB |
+| MLX peak: 1200×900 / 2560×1024 photo | 3.36 / 3.57 GB | 1.68 / 1.78 GB |
+| Available after the run | 1.7 GB | 2.6 GB |
 
 Both precisions give the same top answers; probabilities differ by under a
 percentage point. The first float16 launch after installing is slower
 (text 1.7 s, voice 0.9 s) while Metal compiles its half-precision kernels.
-A photo is slow because every question re-runs the trunk over the roughly
-1,800-position image prefix, as the reference does.
+The self-test prints each run's own MLX peak; the 2560×1024 photo (2,810
+prefix positions, near the 2,816 maximum) sets the 3.9 GB float32 threshold.
+A photo is slow because every question re-runs the trunk over the image
+prefix (about 1,800 positions for 1200×900), as the reference does.
 
 ## Memory
 
