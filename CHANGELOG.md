@@ -21,6 +21,8 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   safetensors tensors; torch-exact `AntialiasedResize` and Slaney
   `MelFilterbank`.
 - `system-one serve --model-folder` serves d1.
+- The iOS harness runs d1 on device with photo-library, camera, and
+  microphone input, plus a `-selfTest` launch mode; verified on an iPhone 14 Pro.
 - iOS 17 platform support for the library.
 - `Examples/SystemOneHarness` (formerly `VonHarness`), a SwiftUI app that loads the verified weights on an
   iPhone or iPad and reports `systemOne` answers, latency, and memory.

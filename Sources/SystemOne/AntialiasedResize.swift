@@ -106,24 +106,41 @@ package enum AntialiasedResize {
         while precision < 22, Int(0.5 + maximumWeight * Double(1 << (precision + 1))) < (1 << 15) {
             precision += 1
         }
-        let integerWeights = taps.weights.map { row in
-            row.map { weight -> Int32 in
+        // Flat int16-valued weights, `width` taps per output index.
+        let width = taps.weights.map(\.count).max() ?? 0
+        var integerWeights = [Int32](repeating: 0, count: outputLength * width)
+        for (index, row) in taps.weights.enumerated() {
+            for (tap, weight) in row.enumerated() {
                 let value = weight * Double(1 << precision)
-                return Int32(value < 0 ? Int(-0.5 + value) : Int(0.5 + value))
+                integerWeights[index * width + tap] = Int32(value < 0 ? Int(-0.5 + value) : Int(0.5 + value))
             }
         }
+        let counts = taps.weights.map(\.count)
         let bias = Int32(1) << Int32(precision - 1)
+        let shift = Int32(precision)
         var output = [UInt8](repeating: 0, count: lines * outputLength * channels)
-        for line in 0..<lines {
-            for index in 0..<outputLength {
-                let start = taps.starts[index]
-                for channel in 0..<channels {
-                    var sum = bias
-                    for (tap, weight) in integerWeights[index].enumerated() {
-                        sum += Int32(input[line * lineStride + (start + tap) * step + channel]) * weight
+        input.withUnsafeBufferPointer { source in
+            integerWeights.withUnsafeBufferPointer { weights in
+                output.withUnsafeMutableBufferPointer { destination in
+                    for line in 0..<lines {
+                        let lineStart = line * lineStride
+                        let outputLineStart = line * outputLineStride
+                        for index in 0..<outputLength {
+                            let first = lineStart + taps.starts[index] * step
+                            let row = index * width
+                            let count = counts[index]
+                            for channel in 0..<channels {
+                                var sum = bias
+                                var position = first + channel
+                                for tap in 0..<count {
+                                    sum &+= Int32(source[position]) &* weights[row + tap]
+                                    position += step
+                                }
+                                destination[outputLineStart + index * outputStep + channel] =
+                                    UInt8(truncatingIfNeeded: min(max(sum >> shift, 0), 255))
+                            }
+                        }
                     }
-                    let value = min(max(sum >> Int32(precision), 0), 255)
-                    output[line * outputLineStride + index * outputStep + channel] = UInt8(value)
                 }
             }
         }

@@ -6,5 +6,9 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record a short voice clip for the decision model to answer questions about. Audio stays on this device.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo for the decision model to answer questions about. Photos stay on this device.</string>
 </dict>
 </plist>

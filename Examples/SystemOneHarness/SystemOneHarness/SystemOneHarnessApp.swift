@@ -9,6 +9,11 @@ struct SystemOneHarnessApp: App {
         WindowGroup {
             ContentView()
                 .environment(model)
+                .task {
+                    if ProcessInfo.processInfo.arguments.contains("-selfTest") {
+                        await model.selfTest()
+                    }
+                }
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Files copied in through Finder appear while the app is in the background.

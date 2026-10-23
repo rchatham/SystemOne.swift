@@ -139,7 +139,7 @@ von's installation, conversion, and parity commands are in
 - [docs/VON.md](docs/VON.md): von installation and verification record
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): microbatching and von benchmarks
 - [docs/HANDOFF.md](docs/HANDOFF.md): resume-here state
-- [Examples/SystemOneHarness](Examples/SystemOneHarness/README.md): iOS harness app
+- [Examples/SystemOneHarness](Examples/SystemOneHarness/README.md): iOS app running d1 on device with camera, photo, and microphone input
 
 ## License
 
