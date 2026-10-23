@@ -16,7 +16,9 @@ enum HarnessSample: String, CaseIterable, Hashable {
         }
     }
 
-    /// The default state text; photo and voice requests often need none.
+    /// The default state text. Photo and voice default to none: an empty state
+    /// is sent with audio as the `{}` the audio questions were trained on, and
+    /// extra text there (even "Voice note from a user.") shifts the answers.
     var state: String {
         switch self {
         case .text:
@@ -26,8 +28,7 @@ enum HarnessSample: String, CaseIterable, Hashable {
             out at the payment gateway; other regions are unaffected. On-call has paged \
             the payments team and is preparing a rollback.
             """
-        case .photo: ""
-        case .voice: "Voice note from a user."
+        case .photo, .voice: ""
         }
     }
 
@@ -64,6 +65,13 @@ enum HarnessSample: String, CaseIterable, Hashable {
                     ("information", "To find something out"),
                     ("action", "To get something done"),
                     ("chat", "Just to talk"),
+                ]),
+                // The audio questions were trained on utterance types; this
+                // choice reads questions far more reliably than the yes/no below.
+                choice("utterance", "What kind of utterance is this?", [
+                    ("question", "A question"),
+                    ("statement", "A statement"),
+                    ("request", "A request or command"),
                 ]),
                 noul("question", "Is the speaker asking a question?"),
                 score("urgency", "How urgent does the speaker sound?", ["Not urgent", "Somewhat", "Very urgent"]),
