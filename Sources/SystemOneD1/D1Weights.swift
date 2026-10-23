@@ -6,6 +6,25 @@ import Foundation
 import MLX
 import SystemOne
 
+/// The dtype d1 keeps its weights and runs its activations in.
+///
+/// The checkpoint is float32 and so is the reference. float16 halves weight
+/// memory in MLX (2.24 GB to 1.12 GB) and, per the d1-omni model card, kept the float32
+/// top answer on every text, image, and audio row it was checked on; bfloat16
+/// did not, so it is not offered. The audio mel front end, the head's logits,
+/// and calibration stay float32 either way.
+public enum D1Precision: String, Sendable, CaseIterable {
+    case float32
+    case float16
+
+    var dataType: DType {
+        switch self {
+        case .float32: return .float32
+        case .float16: return .float16
+        }
+    }
+}
+
 /// A d1-omni checkpoint validated against the exact tensor schema its
 /// configuration implies: trunk, decision head, vision tower, and audio encoder.
 public struct D1Weights: Sendable {
@@ -18,27 +37,72 @@ public struct D1Weights: Sendable {
 
     public let safetensors: SafetensorsFile
     public let configuration: D1Configuration
+    public let precision: D1Precision
+    /// The first weight float16 would turn into infinity, met while converting.
+    private let overflow = Float16Overflow()
 
     /// Opens a checkpoint and validates its schema without pinning its bytes.
-    public init(contentsOf url: URL, configuration: D1Configuration) throws {
-        try self.init(safetensors: SafetensorsFile(contentsOf: url), configuration: configuration)
+    public init(contentsOf url: URL, configuration: D1Configuration, precision: D1Precision = .float32) throws {
+        try self.init(safetensors: SafetensorsFile(contentsOf: url), configuration: configuration,
+                      precision: precision)
     }
 
     /// Verifies whole-file size and SHA-256 before validating the schema.
-    public init(contentsOf url: URL, pinnedTo artifact: PinnedArtifact, configuration: D1Configuration) throws {
-        try self.init(safetensors: SafetensorsFile(contentsOf: url, pinnedTo: artifact), configuration: configuration)
+    public init(
+        contentsOf url: URL,
+        pinnedTo artifact: PinnedArtifact,
+        configuration: D1Configuration,
+        precision: D1Precision = .float32
+    ) throws {
+        try self.init(safetensors: SafetensorsFile(contentsOf: url, pinnedTo: artifact), configuration: configuration,
+                      precision: precision)
     }
 
-    public init(safetensors: SafetensorsFile, configuration: D1Configuration) throws {
+    public init(safetensors: SafetensorsFile, configuration: D1Configuration, precision: D1Precision = .float32) throws {
         try safetensors.validate(schema: Self.schema(for: configuration))
         self.safetensors = safetensors
         self.configuration = configuration
+        self.precision = precision
     }
 
-    /// Copies one float32 tensor into an MLX-owned array.
+    /// The compute dtype every activation should stay in.
+    var dataType: DType { precision.dataType }
+
+    /// Copies one float32 tensor into an MLX-owned array of the compute dtype.
+    /// At float16, a value float16 cannot hold is recorded for `checkFloat16Range()`.
     func array(_ name: String) -> MLXArray {
         // The schema was validated at load, so every requested name exists.
+        let tensor = safetensors.tensor(named: name)!
+        guard precision == .float16 else { return tensor.mlxArray() }
+        let (array, maximum) = tensor.float16Array()
+        overflow.record(name: name, maximumMagnitude: maximum)
+        return array
+    }
+
+    /// Copies one tensor at float32, for derived weights folded before the cast.
+    func float32Array(_ name: String) -> MLXArray {
         safetensors.tensor(named: name)!.mlxArray()
+    }
+
+    /// Casts a weight derived in float32 (folded BatchNorm, say) to the compute
+    /// dtype, recording it like `array(_:)` when float16 cannot hold it.
+    func cast(_ derived: MLXArray, name: String) -> MLXArray {
+        guard precision == .float16 else { return derived }
+        checkRange(of: derived, name: name)
+        return derived.asType(.float16)
+    }
+
+    /// Records a float32 weight that is cast to float16 later, such as a
+    /// position grid resampled per image, when float16 cannot hold it.
+    func checkRange(of derived: MLXArray, name: String) {
+        guard precision == .float16 else { return }
+        overflow.record(name: name, maximumMagnitude: abs(derived).max().item(Float.self))
+    }
+
+    /// Throws `WeightsError.float16Overflow` for the first weight that would
+    /// have loaded as infinity, rather than answering with infinities.
+    func checkFloat16Range() throws {
+        if let error = overflow.first { throw error }
     }
 
     /// Every tensor name, shape, and dtype the configuration implies.
@@ -161,5 +225,20 @@ public struct D1Weights: Sendable {
         linear("audio.residual.down", audio.residualWidth, d)
         linear("audio.residual.up", d, audio.residualWidth)
         return schema
+    }
+}
+
+/// The first float16 overflow seen while one model's weights were converted.
+private final class Float16Overflow: @unchecked Sendable {
+    private let lock = NSLock()
+    private var error: WeightsError?
+
+    var first: WeightsError? { lock.withLock { error } }
+
+    func record(name: String, maximumMagnitude: Float) {
+        guard maximumMagnitude >= SafetensorsTensorView.float16OverflowMagnitude else { return }
+        lock.withLock {
+            if error == nil { error = .float16Overflow(name: name, maximumMagnitude: maximumMagnitude) }
+        }
     }
 }

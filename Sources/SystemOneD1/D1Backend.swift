@@ -22,23 +22,25 @@ public final class D1Backend: DecisionBackend {
 
     /// Loads a local d1 model folder (`config.json`, tokenizer files, and
     /// `model.safetensors`). Pass `artifact: nil` to skip the byte-for-byte pin,
-    /// for example when loading a fine-tuned checkpoint.
+    /// for example when loading a fine-tuned checkpoint. `precision: .float16`
+    /// halves weight memory for devices that cannot hold the float32 model.
     public convenience init(
         modelFolder: URL,
         modelID: String = "d1-omni-600M",
-        artifact: PinnedArtifact? = D1Weights.d1Omni600MArtifact
+        artifact: PinnedArtifact? = D1Weights.d1Omni600MArtifact,
+        precision: D1Precision = .float32
     ) async throws {
         let configuration = try D1Configuration(modelFolder: modelFolder)
         let tokenizer = try await D1Tokenizer(modelFolder: modelFolder)
         let url = modelFolder.appendingPathComponent("model.safetensors")
         let weights = try artifact.map {
-            try D1Weights(contentsOf: url, pinnedTo: $0, configuration: configuration)
-        } ?? D1Weights(contentsOf: url, configuration: configuration)
+            try D1Weights(contentsOf: url, pinnedTo: $0, configuration: configuration, precision: precision)
+        } ?? D1Weights(contentsOf: url, configuration: configuration, precision: precision)
         self.init(
             modelID: modelID,
             configuration: configuration,
             tokenizer: tokenizer,
-            model: D1Model(weights: weights),
+            model: try D1Model(weights: weights),
             logitsProvider: nil
         )
     }
@@ -113,7 +115,8 @@ public final class D1Backend: DecisionBackend {
             perRow = try await logitsProvider(rows)
         } else {
             guard let model else { preconditionFailure("D1Backend has no logits provider") }
-            let logits = try model.logits(for: rows)
+            // float16 logits come back to float32 before calibration, as `encoder.py` does.
+            let logits = try model.logits(for: rows).asType(.float32)
             eval(logits)
             let width = logits.dim(1)
             let flat = logits.asArray(Float.self)
@@ -199,8 +202,11 @@ extension SystemOneEngine {
     public static func d1(
         modelFolder: URL,
         modelID: String = "d1-omni-600M",
-        artifact: PinnedArtifact? = D1Weights.d1Omni600MArtifact
+        artifact: PinnedArtifact? = D1Weights.d1Omni600MArtifact,
+        precision: D1Precision = .float32
     ) async throws -> SystemOneEngine {
-        SystemOneEngine(backend: try await D1Backend(modelFolder: modelFolder, modelID: modelID, artifact: artifact))
+        SystemOneEngine(backend: try await D1Backend(
+            modelFolder: modelFolder, modelID: modelID, artifact: artifact, precision: precision
+        ))
     }
 }

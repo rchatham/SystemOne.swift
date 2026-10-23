@@ -41,6 +41,29 @@ final class SafetensorsTests: XCTestCase {
         XCTAssertEqual(file.withUnsafeBytes { $0.count }, file.fileByteCount)
     }
 
+    func testFloat16BytesRoundToNearestEven() {
+        let values: [Float] = [1, -2.5, 0.1, 2_049, 2_051, 65_504, 70_000, 6e-8, 1e-8]
+        let half = SafetensorsTensorView.float16Bytes(values)
+        let bits = half.withUnsafeBytes { Array($0.bindMemory(to: UInt16.self)) }
+        // 2049 and 2051 are ties: they round to the even neighbours 2048 and 2052.
+        XCTAssertEqual(bits, [0x3C00, 0xC100, 0x2E66, 0x6800, 0x6802, 0x7BFF, 0x7C00, 0x0001, 0x0000])
+        XCTAssertEqual(SafetensorsTensorView.float16Bytes([]).count, 0)
+    }
+
+    func testMaximumMagnitudeReadsAlignedAndMisalignedPayloads() throws {
+        func file(_ values: [Float], headerRemainder: Int) throws -> SafetensorsFile {
+            var header = Array(#"{"w":{"dtype":"F32","shape":[\#(values.count)],"data_offsets":[0,\#(values.count * 4)]}}"#.utf8)
+            // The payload starts at 8 + header length: a remainder of 2 leaves the floats misaligned.
+            while header.count % 4 != headerRemainder { header.append(0x20) }
+            return try SafetensorsFile(contentsOf: makeFile(header: header, payload: values.withUnsafeBytes { Array($0) }))
+        }
+        for remainder in [0, 2] {
+            let tensor = try XCTUnwrap(file([1, -65_520, 0.5], headerRemainder: remainder).tensor(named: "w"))
+            XCTAssertEqual(tensor.maximumMagnitude(), 65_520, "header remainder \(remainder)")
+        }
+        XCTAssertEqual(SafetensorsTensorView.float16OverflowMagnitude, 65_520)
+    }
+
     func testTensorViewRetainsMappingAfterFileAndPathAreReleased() throws {
         let url = try makeFile(
             header: Array(singleTensorHeader(shape: "[2]", offsets: "[0,8]").utf8),

@@ -26,6 +26,21 @@ struct ContentView: View {
 
                 Section("Engine") {
                     LabeledContent("Status", value: statusText)
+                    if let loaded = model.loadedPrecision {
+                        LabeledContent("Precision", value: loaded.rawValue)
+                    } else {
+                        Picker("Precision", selection: $model.precision) {
+                            ForEach(HarnessPrecision.allCases, id: \.self) { precision in
+                                Text(precision.label).tag(precision)
+                            }
+                        }
+                        .disabled(isBusy)
+                        if model.precision == .automatic {
+                            Text("Loads float32 with at least \(megabytes(HarnessModel.float32RequiredBytes)) available, else float16 (half the memory, same top answers).")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     if case .failed(let message) = model.phase {
                         Text(message).font(.footnote).foregroundStyle(.red)
                     }
@@ -99,7 +114,8 @@ struct ContentView: View {
                 }
 
                 Section("Memory") {
-                    LabeledContent("Available to process", value: bytes(model.memory.availableToProcess))
+                    // In MB like the threshold above and the self-test log.
+                    LabeledContent("Available to process", value: megabytes(model.memory.availableToProcess))
                     LabeledContent("MLX active", value: bytes(model.memory.mlxActive))
                     LabeledContent("MLX cache", value: bytes(model.memory.mlxCache))
                     LabeledContent("MLX peak", value: bytes(model.memory.mlxPeak))
@@ -145,6 +161,11 @@ struct ContentView: View {
         case .running: "Running…"
         case .failed: "Failed"
         }
+    }
+
+    /// Whole MiB, the unit the self-test logs and the README use.
+    private func megabytes(_ count: Int) -> String {
+        "\((count / 1_048_576).formatted()) MB"
     }
 
     private func bytes(_ count: Int) -> String {

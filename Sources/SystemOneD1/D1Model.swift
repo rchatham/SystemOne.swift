@@ -50,12 +50,15 @@ final class D1Model {
     let vision: D1Vision
     let audio: D1Audio
 
-    init(weights: D1Weights) {
+    /// Throws `WeightsError.float16Overflow` when a float16 load met a weight
+    /// beyond float16's range.
+    init(weights: D1Weights) throws {
         configuration = weights.configuration
         trunk = D1Trunk(weights: weights)
         head = D1DecisionHead(weights: weights)
         vision = D1Vision(weights: weights)
         audio = D1Audio(weights: weights)
+        try weights.checkFloat16Range()
     }
 
     /// Prefix length a media input will occupy, computed from its shape alone.
