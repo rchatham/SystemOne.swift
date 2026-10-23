@@ -163,8 +163,22 @@ final class D1Trunk {
         let keepRight = (positions.reshaped(1, length) .!= (prefixColumn - 1))
             .asType(.float32).expandedDimensions(axis: -1)
 
+        // Rows whose text together is no longer than the prefix fold into one
+        // sequence that reads the prefix keys once, with a block mask keeping
+        // each row to its own text. Otherwise each row gets its own copy of the
+        // prefix keys, which costs little next to that much text.
+        let folded = prefix.map { batch > 1 && batch * length <= $0.length } ?? false
+
         var mask: MLXArray?
-        if prefix != nil {
+        if folded {
+            let textPositions = batch * length
+            let row = MLXArray((0..<textPositions).map { Int32($0 / length) })
+            let realKey = MLXArray((0..<textPositions).map { $0 % length < lengths[$0 / length] })
+            let ownText = logicalAnd(row.reshaped(-1, 1) .== row.reshaped(1, -1), realKey.reshaped(1, -1))
+            let textMask = MLX.where(ownText, MLXArray(Float(0)), MLXArray(Self.blocked))
+            mask = concatenated([MLXArray.zeros([textPositions, offset]), textMask], axis: 1)
+                .reshaped(1, 1, textPositions, offset + textPositions)
+        } else if prefix != nil {
             // Text reads every prefix key and its own row's real text keys.
             if lengths.contains(where: { $0 != length }) {
                 let keys = MLXArray(0..<Int32(offset + length)).reshaped(1, offset + length)
@@ -226,17 +240,31 @@ final class D1Trunk {
                                  base: configuration.ropeTheta, scale: 1, offset: offset)
                 if recording { recorded.append(.attention(keys: k, values: v)) }
                 if case .attention(let keys, let values)? = prefix?.layers[index] {
-                    func shared(_ x: MLXArray) -> MLXArray {
-                        MLX.broadcast(x, to: [batch, x.dim(1), x.dim(2), x.dim(3)])
+                    if folded {
+                        // [B, H, T, head] -> [1, H, B·T, head]
+                        func fold(_ x: MLXArray) -> MLXArray {
+                            x.transposed(1, 0, 2, 3).reshaped(1, x.dim(1), batch * length, headDimension)
+                        }
+                        q = fold(q)
+                        k = concatenated([keys, fold(k)], axis: 2)
+                        v = concatenated([values, fold(v)], axis: 2)
+                    } else {
+                        func shared(_ x: MLXArray) -> MLXArray {
+                            MLX.broadcast(x, to: [batch, x.dim(1), x.dim(2), x.dim(3)])
+                        }
+                        k = concatenated([shared(keys), k], axis: 2)
+                        v = concatenated([shared(values), v], axis: 2)
                     }
-                    k = concatenated([shared(keys), k], axis: 2)
-                    v = concatenated([shared(values), v], axis: 2)
                 }
-                let attended = MLXFast.scaledDotProductAttention(
+                var attended = MLXFast.scaledDotProductAttention(
                     queries: q, keys: k, values: v,
                     scale: 1 / Float(headDimension).squareRoot(),
                     mask: mask
                 )
+                if folded {
+                    attended = attended.reshaped(attended.dim(1), batch, length, headDimension)
+                        .transposed(1, 0, 2, 3)
+                }
                 hidden = hidden + output(attended.transposed(0, 2, 1, 3).reshaped(batch, length, -1))
             }
             let ffnInput = MLXFast.rmsNorm(hidden, weight: layer.feedForwardNorm, eps: eps)
