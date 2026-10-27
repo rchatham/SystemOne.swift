@@ -34,10 +34,20 @@ final class HarnessModel {
     /// Bounds MLX's reusable buffer cache so it cannot grow toward the jetsam limit.
     private static let mlxCacheLimitBytes = 64 * 1024 * 1024
 
+    /// Headroom float32 needs before load. On an iPhone 14 Pro the largest image
+    /// prefix (2560×1024: 5×2 tiles plus a thumbnail, 2,810 of at most 2,816
+    /// positions; the `-selfTest` run) peaks at 3,569 MB of MLX memory with
+    /// automatic batching, and the app adds about 135 MB; 3,900 MB leaves about
+    /// 200 MB of margin. Text states of thousands of tokens can exceed it: the
+    /// trunk accepts up to 16,384 positions.
+    static let float32RequiredBytes = 3_900 * 1_048_576
+
     private(set) var phase: Phase = .idle
     private(set) var measurements: [Measurement] = []
     private(set) var answerLines: [String] = []
     private(set) var memory = MemoryReport.current()
+    /// The MLX peak before the self-test last reset it to measure one run.
+    private var earlierPeak = 0
     private(set) var media: HarnessMedia?
     private(set) var usage: String?
 
@@ -48,6 +58,10 @@ final class HarnessModel {
     /// An optional extra yes/no question asked alongside the sample's.
     var customQuestion = ""
     var batching: HarnessBatching = .automatic
+    /// Defaults to `-precision float32|float16` from the launch arguments, else automatic.
+    var precision = HarnessPrecision(rawValue: UserDefaults.standard.string(forKey: "precision") ?? "") ?? .automatic
+    /// The precision the current engine was loaded at.
+    private(set) var loadedPrecision: D1Precision?
     let recorder = AudioRecorder()
 
     private var engine: SystemOneEngine?
@@ -76,7 +90,7 @@ final class HarnessModel {
     }
 
     func refreshMemory() {
-        memory = MemoryReport.current()
+        memory = MemoryReport.current(earlierPeak: earlierPeak)
     }
 
     /// Copies the four snapshot files from a user-picked folder into Documents.
@@ -107,12 +121,14 @@ final class HarnessModel {
     func loadEngine() async {
         phase = .loading
         let folder = modelFolder
+        let resolved = precision.resolved(availableBytes: MemoryReport.current().availableToProcess)
         let start = ContinuousClock.now
         do {
             engine = try await Task.detached(priority: .userInitiated) {
-                try await SystemOneEngine.d1(modelFolder: folder)
+                try await SystemOneEngine.d1(modelFolder: folder, precision: resolved)
             }.value
-            record("Load (verify + copy)", since: start)
+            loadedPrecision = resolved
+            record("Load \(resolved.rawValue) (verify + copy)", since: start)
             phase = .ready
         } catch {
             phase = .failed("Load failed: \(error.localizedDescription)")
@@ -179,6 +195,7 @@ final class HarnessModel {
 
     func unloadEngine() {
         engine = nil
+        loadedPrecision = nil
         MLX.Memory.clearCache()
         answerLines = []
         usage = nil
@@ -193,19 +210,15 @@ final class HarnessModel {
         func log(_ line: String) { print("[selfTest] \(line)") }
         log("available before load: \(MemoryReport.current().availableToProcess / 1_048_576) MB")
         await loadEngine()
-        guard phase == .ready else { return log("FAILED \(phase)") }
-        let width = 1_200, height = 900
-        var pixels = [UInt8]()
-        pixels.reserveCapacity(width * height * 3)
-        for y in 0..<height {
-            for x in 0..<width {
-                pixels += [UInt8(x * 255 / width), UInt8(y * 255 / height), (x / 60 + y / 60) % 2 == 0 ? 220 : 30]
-            }
-        }
+        guard phase == .ready, let loadedPrecision else { return log("FAILED \(phase)") }
+        log("precision: \(loadedPrecision.rawValue) (\(precision.label))")
         // Exercise the same decode paths as the photo picker and the recorder:
         // a UIImage through RGBImage(photo:), and WAV files through D1AudioFormat.
-        let synthetic = RGBImage(width: width, height: height, pixels: pixels)
+        let synthetic = Self.syntheticImage(width: 1_200, height: 900)
         let photo = UIImage(cgImage: synthetic.cgImage)
+        // 5×2 tiles plus a thumbnail: 2,810 prefix positions, near the 2,816
+        // maximum, so this run sets the memory bound `float32RequiredBytes` uses.
+        let largest = Self.syntheticImage(width: 2_560, height: 1_024)
         guard let image = RGBImage(photo: photo),
               image == synthetic
         else { return log("FAILED photo round trip") }
@@ -222,6 +235,7 @@ final class HarnessModel {
                 // Again, once Metal kernels for these shapes are compiled.
                 (.photo, .image(preview: photo, image: image)),
                 (.voice, .audio(seconds: 3, clip: clip)),
+                (.photo, .image(preview: UIImage(cgImage: largest.cgImage), image: largest)),
             ]
         } catch {
             return log("FAILED audio decode: \(error)")
@@ -229,16 +243,33 @@ final class HarnessModel {
         for (sample, attachment) in runs {
             self.sample = sample
             media = attachment
+            earlierPeak = max(earlierPeak, MLX.Memory.peakMemory)
+            MLX.Memory.peakMemory = 0
             await run()
             guard phase == .ready else { return log("FAILED \(sample.label): \(phase)") }
-            log("\(sample.label): \(answerLines.joined(separator: " | ")) [\(usage ?? "")]")
+            let peak = MLX.Memory.peakMemory / 1_048_576
+            log("\(sample.label): \(answerLines.joined(separator: " | ")) [\(usage ?? ""); MLX peak \(peak) MB]")
         }
         for measurement in measurements.reversed() {
             log("\(measurement.label): \(Int(measurement.milliseconds)) ms")
         }
         let memory = MemoryReport.current()
-        log("MLX active \(memory.mlxActive / 1_048_576) MB, peak \(memory.mlxPeak / 1_048_576) MB, available \(memory.availableToProcess / 1_048_576) MB")
+        log("MLX active \(memory.mlxActive / 1_048_576) MB, available \(memory.availableToProcess / 1_048_576) MB")
         log("PASSED")
+    }
+
+    /// A gradient with a checkerboard, so every crop has structure.
+    private static func syntheticImage(width: Int, height: Int) -> RGBImage {
+        var pixels = [UInt8](repeating: 0, count: width * height * 3)
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = (y * width + x) * 3
+                pixels[index] = UInt8(x * 255 / width)
+                pixels[index + 1] = UInt8(y * 255 / height)
+                pixels[index + 2] = (x / 60 + y / 60) % 2 == 0 ? 220 : 30
+            }
+        }
+        return RGBImage(width: width, height: height, pixels: pixels)
     }
 
     /// Writes a 3 s 220 Hz tone as 16-bit PCM WAV.
@@ -272,6 +303,34 @@ final class HarnessModel {
     }
 }
 
+/// How the harness picks d1's precision at load.
+enum HarnessPrecision: String, CaseIterable, Hashable {
+    case automatic
+    case float32
+    case float16
+
+    var label: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .float32: "float32"
+        case .float16: "float16"
+        }
+    }
+
+    /// Automatic keeps the reference float32 when the process can hold it and
+    /// falls back to float16 (half the weight memory) on smaller devices.
+    /// `os_proc_available_memory()` is 0 when the process has no jetsam limit,
+    /// as for an iOS app on a Mac, so 0 keeps float32.
+    func resolved(availableBytes: Int) -> D1Precision {
+        switch self {
+        case .automatic:
+            availableBytes == 0 || availableBytes >= HarnessModel.float32RequiredBytes ? .float32 : .float16
+        case .float32: .float32
+        case .float16: .float16
+        }
+    }
+}
+
 /// The engine's batching strategies, in a form SwiftUI can use as `Picker` tags.
 enum HarnessBatching: String, CaseIterable, Hashable {
     case sequential
@@ -297,13 +356,14 @@ struct MemoryReport {
     let mlxCache: Int
     let mlxPeak: Int
 
-    static func current() -> MemoryReport {
+    /// `earlierPeak` carries the MLX peak across the self-test's per-run resets.
+    static func current(earlierPeak: Int = 0) -> MemoryReport {
         let snapshot = MLX.Memory.snapshot()
         return MemoryReport(
             availableToProcess: Int(os_proc_available_memory()),
             mlxActive: snapshot.activeMemory,
             mlxCache: snapshot.cacheMemory,
-            mlxPeak: snapshot.peakMemory
+            mlxPeak: max(snapshot.peakMemory, earlierPeak)
         )
     }
 }

@@ -31,17 +31,23 @@ final class D1Trunk {
         let down: Linear
     }
 
-    /// Additive mask value for blocked keys, as `encoder.py` uses in float32.
-    static let blocked: Float = -1e9
+    /// Additive mask value for blocked keys: `max(-1e9, finfo(dtype).min)`, as
+    /// `encoder.py` clamps it (-1e9 does not fit in float16).
+    static func blocked(_ dataType: DType) -> Float {
+        dataType == .float16 ? -65_504 : -1e9
+    }
 
     let embedding: Embedding
     private let layers: [Layer]
     private let finalNorm: MLXArray
     private let configuration: D1Configuration.Text
+    /// Compute dtype: every mask and padding multiplier is built in it.
+    let dataType: DType
 
     init(weights: D1Weights) {
         let configuration = weights.configuration.text
         self.configuration = configuration
+        dataType = weights.dataType
         embedding = Embedding(weight: weights.array("encoder.embed_tokens.weight"))
         finalNorm = weights.array("encoder.embedding_norm.weight")
         layers = (0..<configuration.numHiddenLayers).map { index in
@@ -98,10 +104,10 @@ final class D1Trunk {
         let prefixColumn = MLXArray(prefixLengths.map(Int32.init)).reshaped(batch, 1)
 
         let real = positions.reshaped(1, length) .< lengthColumn
-        let padding = real.asType(.float32).expandedDimensions(axis: -1)
+        let padding = real.asType(dataType).expandedDimensions(axis: -1)
         // The last prefix position never reads the first text position.
         let keepRight = (positions.reshaped(1, length) .!= (prefixColumn - 1))
-            .asType(.float32).expandedDimensions(axis: -1)
+            .asType(dataType).expandedDimensions(axis: -1)
 
         let needsMask = lengths.contains { $0 != length } || prefixLengths.contains { $0 > 0 }
         var mask: MLXArray?
@@ -110,7 +116,9 @@ final class D1Trunk {
             let textKey = (positions.reshaped(1, length) .>= prefixColumn).expandedDimensions(axis: 1)
             let paddedKey = logicalNot(real).expandedDimensions(axis: 1)
             let isBlocked = logicalOr(paddedKey, logicalAnd(mediaQuery, textKey))
-            mask = MLX.where(isBlocked, MLXArray(Self.blocked), MLXArray(Float(0)))
+            // Scalars in the compute dtype, so the full mask is never built in float32.
+            mask = MLX.where(isBlocked, MLXArray(Self.blocked(dataType)).asType(dataType),
+                             MLXArray(Float(0)).asType(dataType))
                 .expandedDimensions(axis: 1)
         }
 

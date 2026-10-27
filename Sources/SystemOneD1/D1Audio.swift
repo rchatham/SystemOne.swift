@@ -38,6 +38,8 @@ final class D1Audio {
     }
 
     private let configuration: D1Configuration.Audio
+    /// Compute dtype of the encoder, adapter, and residual. The mel front end is always float32.
+    private let dataType: DType
     private let filterbank: MLXArray
     private let window: MLXArray
     /// `pre_encode.conv` 0, 2, 3, 5, 6 as MLX NHWC weights with biases.
@@ -50,6 +52,7 @@ final class D1Audio {
     init(weights: D1Weights) {
         let configuration = weights.configuration.audio
         self.configuration = configuration
+        dataType = weights.dataType
         func linear(_ name: String, bias: Bool = true) -> Linear {
             Linear(weight: weights.array("\(name).weight"), bias: bias ? weights.array("\(name).bias") : nil)
         }
@@ -82,9 +85,11 @@ final class D1Audio {
         subsamplingOut = linear("audio.encoder.pre_encode.out")
         layers = (0..<configuration.nLayers).map { index in
             let prefix = "audio.encoder.layers.\(index)"
-            let mean = weights.array("\(prefix).conv.batch_norm.running_mean")
-            let variance = weights.array("\(prefix).conv.batch_norm.running_var")
-            let scale = weights.array("\(prefix).conv.batch_norm.weight") / sqrt(variance + 1e-5)
+            // Folded in float32, then cast, so a tiny running variance cannot lose the scale.
+            let mean = weights.float32Array("\(prefix).conv.batch_norm.running_mean")
+            let variance = weights.float32Array("\(prefix).conv.batch_norm.running_var")
+            let scale = weights.float32Array("\(prefix).conv.batch_norm.weight") / sqrt(variance + 1e-5)
+            let shift = weights.float32Array("\(prefix).conv.batch_norm.bias") - mean * scale
             return Layer(
                 feedForward1: FeedForward(expand: linear("\(prefix).feed_forward1.linear1"),
                                           contract: linear("\(prefix).feed_forward1.linear2")),
@@ -107,8 +112,8 @@ final class D1Audio {
                 depthwiseWeight: weights.array("\(prefix).conv.depthwise_conv.weight").transposed(0, 2, 1),
                 depthwiseBias: weights.array("\(prefix).conv.depthwise_conv.bias"),
                 pointwise2: pointwise("\(prefix).conv.pointwise_conv2"),
-                batchNormScale: scale,
-                batchNormShift: weights.array("\(prefix).conv.batch_norm.bias") - mean * scale
+                batchNormScale: weights.cast(scale, name: "\(prefix).conv.batch_norm (folded scale)"),
+                batchNormShift: weights.cast(shift, name: "\(prefix).conv.batch_norm (folded shift)")
             )
         }
         adapterNorm = norm("audio.adapter.norm")
@@ -137,7 +142,8 @@ final class D1Audio {
     /// `[P, D]` prefix embeddings for one clip.
     func callAsFunction(_ clip: AudioClip) throws -> MLXArray {
         let (features, frames) = melFeatures(clip.samples)
-        let encoded = encoder(features, frames: frames)
+        // `audio.py` hands the float32 mel to the encoder at the model's dtype.
+        let encoded = encoder(features.asType(dataType), frames: frames)
         let adapted = adapterContract(gelu(adapterExpand(adapterNorm(encoded))))
         return adapted + residualUp(gelu(residualDown(residualNorm(adapted))))
     }
@@ -181,7 +187,7 @@ final class D1Audio {
         var x = features.expandedDimensions(axes: [0, -1])
         func masked(_ x: MLXArray, _ length: Int) -> MLXArray {
             let keep = MLXArray(0..<Int32(x.dim(1))) .< Int32(length)
-            return x * keep.asType(.float32).reshaped(1, -1, 1, 1)
+            return x * keep.asType(x.dtype).reshaped(1, -1, 1, 1)
         }
         for (index, conv) in subsampling.enumerated() {
             x = masked(x, length)
@@ -209,14 +215,15 @@ final class D1Audio {
         return hidden
     }
 
-    /// Sinusoids for relative positions `t-1 … -(t-1)`: `[2t-1, d]`.
+    /// Sinusoids for relative positions `t-1 … -(t-1)`: `[2t-1, d]`, computed in
+    /// float32 and cast to the compute dtype.
     func relativePositions(_ length: Int) -> MLXArray {
         let model = configuration.dModel
         let positions = MLXArray((0..<(2 * length - 1)).map { Float(length - 1 - $0) }).reshaped(-1, 1)
         let frequencies = exp(MLXArray(stride(from: 0, to: model, by: 2).map(Float.init))
                               * Float(-(log(10_000.0) / Double(model))))
         let angles = positions * frequencies
-        return stacked([sin(angles), cos(angles)], axis: -1).reshaped(2 * length - 1, model)
+        return stacked([sin(angles), cos(angles)], axis: -1).reshaped(2 * length - 1, model).asType(dataType)
     }
 
     /// Transformer-XL relative-position attention over `[T, d]`.
@@ -234,7 +241,7 @@ final class D1Audio {
         let columns = MLXArray(0..<Int32(time)).reshaped(1, time) - MLXArray(0..<Int32(time)).reshaped(time, 1)
             + Int32(time - 1)
         let positional = takeAlong(full, broadcast(columns, to: [heads, time, time]), axis: -1)
-        let scores = softmax((content + positional) / Float(headDimension).squareRoot(), axis: -1)
+        let scores = softmax((content + positional) / Float(headDimension).squareRoot(), axis: -1, precise: true)
         return layer.output(matmul(scores, v).transposed(1, 0, 2).reshaped(time, -1))
     }
 
