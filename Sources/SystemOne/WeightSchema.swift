@@ -1,3 +1,4 @@
+import Accelerate
 import CryptoKit
 import Foundation
 import MLX
@@ -33,6 +34,7 @@ public enum WeightsError: Error, Equatable, Sendable {
     case tensorSetMismatch(missing: [String], unexpected: [String])
     case dataTypeMismatch(name: String, expected: SafetensorsDataType, actual: SafetensorsDataType)
     case shapeMismatch(name: String, expected: [Int], actual: [Int])
+    case float16Overflow(name: String, maximumMagnitude: Float)
 }
 
 extension WeightsError: LocalizedError {
@@ -48,6 +50,8 @@ extension WeightsError: LocalizedError {
             return "Tensor \(name) has dtype \(actual.rawValue); expected \(expected.rawValue)."
         case .shapeMismatch(let name, let expected, let actual):
             return "Tensor \(name) has shape \(actual); expected \(expected)."
+        case .float16Overflow(let name, let maximumMagnitude):
+            return "Tensor \(name) holds \(maximumMagnitude), beyond float16's range (65504); load it at float32."
         }
     }
 }
@@ -126,5 +130,78 @@ extension SafetensorsTensorView {
         return withUnsafeBytes { bytes in
             MLXArray(Data(bytes: bytes.baseAddress!, count: bytes.count), descriptor.shape, dtype: .float32)
         }
+    }
+
+    /// The smallest magnitude float16 rounds to infinity: values below it round
+    /// to at most 65504.
+    package static let float16OverflowMagnitude: Float = 65_520
+
+    /// Copies this float32 tensor into an MLX-owned float16 array, converted on
+    /// the CPU straight into a page-aligned buffer the array owns, so Metal wraps
+    /// it without a second copy and MLX never holds a float32 copy.
+    ///
+    /// Also returns the source's largest magnitude, read in the same pass:
+    /// values of `float16OverflowMagnitude` or more become infinity.
+    package func float16Array() -> (array: MLXArray, maximumMagnitude: Float) {
+        precondition(descriptor.dataType == .float32, "Only float32 tensors are copied into MLX")
+        let page = Int(getpagesize())
+        var buffer: UnsafeMutableRawPointer?
+        let capacity = max(page, (descriptor.elementCount * 2 + page - 1) / page * page)
+        precondition(posix_memalign(&buffer, page, capacity) == 0, "float16 buffer allocation failed")
+        let maximum = withFloats { values in
+            Self.convertToFloat16(values, into: buffer!)
+            return Self.maximumMagnitude(values)
+        }
+        return (MLXArray(rawPointer: buffer!, descriptor.shape, dtype: .float16) { free(buffer) }, maximum)
+    }
+
+    /// The largest absolute value in this float32 tensor.
+    package func maximumMagnitude() -> Float {
+        precondition(descriptor.dataType == .float32, "Only float32 tensors have a float magnitude")
+        return withFloats(Self.maximumMagnitude)
+    }
+
+    /// IEEE float16 bytes for float32 values, rounding to nearest even.
+    package static func float16Bytes(_ values: [Float]) -> Data {
+        var half = Data(count: values.count * 2)
+        half.withUnsafeMutableBytes { output in
+            values.withUnsafeBufferPointer { if let base = output.baseAddress { convertToFloat16($0, into: base) } }
+        }
+        return half
+    }
+
+    /// The mapped values as floats, copied first when the payload is not
+    /// 4-byte aligned (safetensors does not require an aligned header length).
+    private func withFloats<Result>(_ body: (UnsafeBufferPointer<Float>) -> Result) -> Result {
+        withUnsafeBytes { bytes in
+            let count = bytes.count / MemoryLayout<Float>.size
+            guard let base = bytes.baseAddress, count > 0 else { return body(UnsafeBufferPointer(start: nil, count: 0)) }
+            if Int(bitPattern: base) % MemoryLayout<Float>.alignment == 0 {
+                return body(UnsafeBufferPointer(start: base.assumingMemoryBound(to: Float.self), count: count))
+            }
+            let aligned = [Float](unsafeUninitializedCapacity: count) { storage, initialized in
+                memcpy(storage.baseAddress!, base, count * MemoryLayout<Float>.size)
+                initialized = count
+            }
+            return aligned.withUnsafeBufferPointer(body)
+        }
+    }
+
+    private static func maximumMagnitude(_ values: UnsafeBufferPointer<Float>) -> Float {
+        guard let base = values.baseAddress, !values.isEmpty else { return 0 }
+        var maximum: Float = 0
+        vDSP_maxmgv(base, 1, &maximum, vDSP_Length(values.count))
+        return maximum
+    }
+
+    /// Converts float32 values into IEEE float16 at `destination`, rounding to nearest even.
+    private static func convertToFloat16(_ values: UnsafeBufferPointer<Float>, into destination: UnsafeMutableRawPointer) {
+        guard let base = values.baseAddress, !values.isEmpty else { return }
+        var source = vImage_Buffer(data: UnsafeMutableRawPointer(mutating: base), height: 1,
+                                   width: vImagePixelCount(values.count), rowBytes: values.count * 4)
+        var output = vImage_Buffer(data: destination, height: 1, width: vImagePixelCount(values.count),
+                                   rowBytes: values.count * 2)
+        let status = vImageConvert_PlanarFtoPlanar16F(&source, &output, vImage_Flags(kvImageNoFlags))
+        precondition(status == kvImageNoError, "float16 conversion failed: \(status)")
     }
 }

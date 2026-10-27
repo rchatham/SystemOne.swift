@@ -79,6 +79,11 @@ d1 answers are the model's softmax, with the per-type temperatures from
 For audio-only requests pass `.text("")` (or `.fields([])`); both render as the
 `{}` state the audio questions were trained on.
 
+On memory-bound devices, `SystemOneEngine.d1(modelFolder:precision: .float16)`
+halves weight memory (1.12 GB instead of 2.24 GB). It keeps the float32 top
+answer on every fixture row, with probabilities within 6e-3; see
+[docs/D1.md](docs/D1.md#float16-precision-float16).
+
 ## HTTP server
 
 MLX needs its Metal library, which SwiftPM command-line builds do not bundle,
@@ -143,6 +148,9 @@ von's installation, conversion, and parity commands are in
 
 ## License
 
-SystemOne is licensed under the Apache License 2.0 (see `LICENSE`). Model
-weights are never committed: von's are Apache-2.0, d1-omni's are under the LFM
-Open License v1.0. Attribution is in `THIRD_PARTY_NOTICES.md`.
+SystemOne is licensed under the Apache License 2.0 (see `LICENSE`), except
+`SystemOneD1`, a port of d1-omni's reference code, which is under the
+[LFM Open License v1.0](LICENSES/LFM-Open-License-1.0.txt) and limits
+commercial use by entities with $10M or more in annual revenue. Model weights
+are never committed: von's are Apache-2.0, d1-omni's are under the LFM Open
+License v1.0. Attribution is in `THIRD_PARTY_NOTICES.md`.

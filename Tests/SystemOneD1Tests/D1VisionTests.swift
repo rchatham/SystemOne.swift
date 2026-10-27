@@ -68,7 +68,7 @@ final class D1VisionTests: XCTestCase {
             modelID: "d1-omni-600M",
             configuration: weights.configuration,
             tokenizer: try await D1Tokenizer(modelFolder: folder),
-            model: D1Model(weights: weights),
+            model: try D1Model(weights: weights),
             logitsProvider: nil
         )
         let engine = SystemOneEngine(backend: backend)
@@ -90,7 +90,7 @@ final class D1VisionTests: XCTestCase {
 
     func testImageRowsReusePrefixStates() throws {
         let weights = try D1TextTests.loadWeights()
-        let model = D1Model(weights: weights)
+        let model = try D1Model(weights: weights)
         try Device.withDefaultDevice(D1TextTests.device) {
             for testCase in try D1Fixture.load().vision.requests {
                 let images = testCase.images.map { syntheticImage(width: $0.width, height: $0.height, seed: $0.seed) }

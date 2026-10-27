@@ -1,3 +1,7 @@
+// Swift port of LiquidAI/d1-omni-600M reference code, translated and modified
+// from the original Python. Licensed under the LFM Open License v1.0; see
+// LICENSES/LFM-Open-License-1.0.txt.
+
 import Foundation
 import MLX
 import MLXNN
@@ -29,17 +33,23 @@ final class D1Trunk {
         let down: Linear
     }
 
-    /// Additive mask value for blocked keys, as `encoder.py` uses in float32.
-    static let blocked: Float = -1e9
+    /// Additive mask value for blocked keys: `max(-1e9, finfo(dtype).min)`, as
+    /// `encoder.py` clamps it (-1e9 does not fit in float16).
+    static func blocked(_ dataType: DType) -> Float {
+        dataType == .float16 ? -65_504 : -1e9
+    }
 
     let embedding: Embedding
     private let layers: [Layer]
     private let finalNorm: MLXArray
     private let configuration: D1Configuration.Text
+    /// Compute dtype: every mask and padding multiplier is built in it.
+    let dataType: DType
 
     init(weights: D1Weights) {
         let configuration = weights.configuration.text
         self.configuration = configuration
+        dataType = weights.dataType
         embedding = Embedding(weight: weights.array("encoder.embed_tokens.weight"))
         finalNorm = weights.array("encoder.embedding_norm.weight")
         layers = (0..<configuration.numHiddenLayers).map { index in
@@ -158,10 +168,10 @@ final class D1Trunk {
         let offset = prefix?.length ?? 0
 
         let real = positions.reshaped(1, length) .< lengthColumn
-        let padding = real.asType(.float32).expandedDimensions(axis: -1)
+        let padding = real.asType(dataType).expandedDimensions(axis: -1)
         // The last prefix position never reads the first text position.
         let keepRight = (positions.reshaped(1, length) .!= (prefixColumn - 1))
-            .asType(.float32).expandedDimensions(axis: -1)
+            .asType(dataType).expandedDimensions(axis: -1)
 
         // Rows whose text together is no longer than the prefix fold into one
         // sequence that reads the prefix keys once, with a block mask keeping
@@ -169,21 +179,24 @@ final class D1Trunk {
         // prefix keys, which costs little next to that much text.
         let folded = prefix.map { batch > 1 && batch * length <= $0.length } ?? false
 
+        // Scalars in the compute dtype, so the full mask is never built in float32.
+        let blockedKey = MLXArray(Self.blocked(dataType)).asType(dataType)
+        let openKey = MLXArray(Float(0)).asType(dataType)
         var mask: MLXArray?
         if folded {
             let textPositions = batch * length
             let row = MLXArray((0..<textPositions).map { Int32($0 / length) })
             let realKey = MLXArray((0..<textPositions).map { $0 % length < lengths[$0 / length] })
             let ownText = logicalAnd(row.reshaped(-1, 1) .== row.reshaped(1, -1), realKey.reshaped(1, -1))
-            let textMask = MLX.where(ownText, MLXArray(Float(0)), MLXArray(Self.blocked))
-            mask = concatenated([MLXArray.zeros([textPositions, offset]), textMask], axis: 1)
+            let textMask = MLX.where(ownText, openKey, blockedKey)
+            mask = concatenated([MLXArray.zeros([textPositions, offset], dtype: dataType), textMask], axis: 1)
                 .reshaped(1, 1, textPositions, offset + textPositions)
         } else if prefix != nil {
             // Text reads every prefix key and its own row's real text keys.
             if lengths.contains(where: { $0 != length }) {
                 let keys = MLXArray(0..<Int32(offset + length)).reshaped(1, offset + length)
                 let paddedKey = keys .>= (lengthColumn + Int32(offset))
-                mask = MLX.where(paddedKey, MLXArray(Self.blocked), MLXArray(Float(0)))
+                mask = MLX.where(paddedKey, blockedKey, openKey)
                     .reshaped(batch, 1, 1, offset + length)
             }
         } else if lengths.contains(where: { $0 != length }) || prefixLengths.contains(where: { $0 > 0 }) {
@@ -191,8 +204,7 @@ final class D1Trunk {
             let textKey = (positions.reshaped(1, length) .>= prefixColumn).expandedDimensions(axis: 1)
             let paddedKey = logicalNot(real).expandedDimensions(axis: 1)
             let isBlocked = logicalOr(paddedKey, logicalAnd(mediaQuery, textKey))
-            mask = MLX.where(isBlocked, MLXArray(Self.blocked), MLXArray(Float(0)))
-                .expandedDimensions(axis: 1)
+            mask = MLX.where(isBlocked, blockedKey, openKey).expandedDimensions(axis: 1)
         }
 
         var hidden = hidden

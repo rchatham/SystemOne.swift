@@ -56,7 +56,7 @@ final class D1AudioTests: XCTestCase {
             modelID: "d1-omni-600M",
             configuration: weights.configuration,
             tokenizer: try await D1Tokenizer(modelFolder: folder),
-            model: D1Model(weights: weights),
+            model: try D1Model(weights: weights),
             logitsProvider: nil
         ))
         for testCase in try D1Fixture.load().audio.requests {
@@ -77,7 +77,7 @@ final class D1AudioTests: XCTestCase {
 
     func testAudioRowsReusePrefixStates() throws {
         let weights = try D1TextTests.loadWeights()
-        let model = D1Model(weights: weights)
+        let model = try D1Model(weights: weights)
         try Device.withDefaultDevice(D1TextTests.device) {
             for testCase in try D1Fixture.load().audio.requests {
                 let clip = AudioClip(pcm16: syntheticAudio(samples: testCase.audio.samples, seed: testCase.audio.seed))

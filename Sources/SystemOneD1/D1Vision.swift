@@ -1,3 +1,7 @@
+// Swift port of LiquidAI/d1-omni-600M reference code, translated and modified
+// from the original Python. Licensed under the LFM Open License v1.0; see
+// LICENSES/LFM-Open-License-1.0.txt.
+
 import Foundation
 import MLX
 import MLXNN
@@ -80,8 +84,10 @@ final class D1Vision {
     }
 
     private let configuration: D1Configuration.Vision
+    /// Compute dtype of the tower and projector.
+    private let dataType: DType
     private let patchEmbedding: Linear
-    /// `[side, side, hidden]` learned position grid.
+    /// `[side, side, hidden]` learned position grid, kept float32 for resampling.
     private let positionGrid: MLXArray
     private let layers: [Layer]
     private let postNormWeight: MLXArray
@@ -91,14 +97,17 @@ final class D1Vision {
 
     init(weights: D1Weights) {
         configuration = weights.configuration.vision
+        dataType = weights.dataType
         let tower = "vision.tower.vision_model"
         func linear(_ name: String) -> Linear {
             Linear(weight: weights.array("\(name).weight"), bias: weights.array("\(name).bias"))
         }
         patchEmbedding = linear("\(tower).embeddings.patch_embedding")
         let side = Int(Double(configuration.numPatches).squareRoot())
-        positionGrid = weights.array("\(tower).embeddings.position_embedding.weight")
+        positionGrid = weights.float32Array("\(tower).embeddings.position_embedding.weight")
             .reshaped(side, side, configuration.hiddenSize)
+        // Resampling takes convex combinations, so the grid bounds every crop's positions.
+        weights.checkRange(of: positionGrid, name: "\(tower).embeddings.position_embedding.weight")
         layers = (0..<configuration.numHiddenLayers).map { index in
             let prefix = "\(tower).encoder.layers.\(index)"
             return Layer(
@@ -165,7 +174,8 @@ final class D1Vision {
     func towerOutput(crop: (height: Int, width: Int, pixels: [UInt8])) -> MLXArray {
         let (rows, columns) = (crop.height / Self.patch, crop.width / Self.patch)
         // RGB in [-1, 1], cut into 16×16 patches flattened as (dy, dx, channel).
-        let normalized = (MLXArray(crop.pixels, [crop.height, crop.width, 3]).asType(.float32) - 127.5) / 127.5
+        let normalized = ((MLXArray(crop.pixels, [crop.height, crop.width, 3]).asType(.float32) - 127.5) / 127.5)
+            .asType(dataType)
         let patches = normalized
             .reshaped(rows, Self.patch, columns, Self.patch, 3)
             .transposed(0, 2, 1, 3, 4)
@@ -174,6 +184,7 @@ final class D1Vision {
     }
 
     /// SigLIP2's position grid resized to the crop's patch grid, flattened row-major.
+    /// Resampled in float32 (as ATen's interpolate runs it), then cast to the compute dtype.
     func positions(rows: Int, columns: Int) -> MLXArray {
         let side = positionGrid.dim(0)
         func matrix(_ input: Int, _ output: Int) -> MLXArray {
@@ -187,7 +198,7 @@ final class D1Vision {
         // [H, W, C]: resample along W first, then H, as ATen's separable pass does.
         let alongWidth = matmul(matrix(side, columns), positionGrid)
         let alongHeight = matmul(matrix(side, rows), alongWidth.swappedAxes(0, 1)).swappedAxes(0, 1)
-        return alongHeight.reshaped(1, rows * columns, configuration.hiddenSize)
+        return alongHeight.reshaped(1, rows * columns, configuration.hiddenSize).asType(dataType)
     }
 
     /// The unpadded SigLIP2 encoder: pre-norm layers, then the post layer norm.

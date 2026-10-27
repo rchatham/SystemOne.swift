@@ -13,9 +13,13 @@ answers, timings, and process/MLX memory.
   GPU features the iOS Simulator does not provide, so inference cannot run
   there. For development on a Mac, pick the **My Mac (Designed for iPad)**
   destination.
-- About 3.4 GB of memory for the app at peak (2.24 GB of float32 weights plus
-  activations). Verified on an iPhone 14 Pro (6 GB); 4 GB devices such as the
-  iPhone 13 are not expected to fit.
+- Up to about 3.6 GB of MLX memory in float32 (2.24 GB of weights plus
+  activations for the largest image), or 1.8 GB in float16.
+  **Precision › Automatic** loads float32 when `os_proc_available_memory()`
+  reports at least 3,900 MB and float16 otherwise (an iOS app on a Mac, where it
+  reports 0, keeps float32). Verified on an iPhone 14 Pro (6 GB, 4,074 MB
+  available) in both precisions, and on a 4 GB iPhone 13 (2,331 MB available),
+  where Automatic loads float16 and the largest photo leaves 1,071 MB available.
 - A paid Apple Developer team for signing. The app requests the
   `com.apple.developer.kernel.increased-memory-limit` entitlement, which
   automatic signing adds to the provisioning profile.
@@ -40,8 +44,10 @@ answers, timings, and process/MLX memory.
    - From a Mac:
      `xcrun devicectl device copy to --device <id> --domain-type appDataContainer --domain-identifier <bundle id> --source model.safetensors --destination Documents/d1-omni-600M/model.safetensors`
      (repeat for each file).
-5. Tap **Load engine**. This hashes the 2.35 GB weights against the pinned
-   SHA-256 and copies every tensor into MLX (about 7 s on an iPhone 14 Pro).
+5. Pick a precision (Automatic, float32, or float16) and tap **Load engine**.
+   This hashes the 2.35 GB weights against the pinned SHA-256 and copies every
+   tensor into MLX (about 7 s on an iPhone 14 Pro). The Engine section then
+   shows the precision that was loaded.
 6. Attach a photo or a recording if you like, pick a question set, and tap
    **Run systemOne**. iOS asks for camera or microphone access the first time.
 
@@ -59,16 +65,41 @@ printing answers, timings, and memory:
 xcrun devicectl device process launch --device <id> --console --terminate-existing <bundle id> -- -selfTest
 ```
 
-On an iPhone 14 Pro (Release): load 6.7 s; text 0.35 s; a three-question photo
-request 2.9 s; a four-question 3 s voice clip 0.26–0.32 s; MLX peak 3.35 GB with 1.7 GB still
-available. The photo's roughly 1,800-position image prefix runs through the
-trunk once per request and every question reuses its states (5.0 s when each
-question re-ran it, as the reference does).
+Add `-precision float32` or `-precision float16` after `-selfTest` to override
+the automatic choice. On an iPhone 14 Pro (Release, 4,074 MB available before
+load, warm Metal kernels):
+
+| | float32 | float16 |
+|---|---|---|
+| Load (verify + copy) | 7.3–9.2 s | 6.7–8.4 s |
+| Text, three questions | 0.35 s | 0.27 s |
+| Photo 1200×900, three questions | 5.0 s | 3.8 s |
+| 3 s voice clip | 0.32 s | 0.21 s |
+| Photo 2560×1024 (largest prefix), three questions | 8.4 s | 6.0 s |
+| MLX active | 2.24 GB | 1.12 GB |
+| MLX peak: 1200×900 / 2560×1024 photo | 3.36 / 3.57 GB | 1.68 / 1.78 GB |
+| Available after the run | 1.7 GB | 2.6 GB |
+
+Both precisions give the same top answers; probabilities differ by under a
+percentage point. The first float16 launch after installing is slower
+(text 1.7 s, voice 0.9 s) while Metal compiles its half-precision kernels.
+On a 4 GB iPhone 13 (Release, 2,331 MB available before load), Automatic
+loaded float16 and every request passed with the same answers as the 14 Pro.
+MLX peaks were the same as the 14 Pro's float16 run (1.69 GB for the
+1200×900 photo, 1.78 GB for 2560×1024), with 1,071 MB still available at the
+end. Its timings so far come from a first launch, which includes compiling
+the Metal kernels: load 21 s, and 5.8 s for the 1200×900 photo once warm.
+
+The self-test prints each run's own MLX peak; the 2560×1024 photo (2,810
+prefix positions, near the 2,816 maximum) sets the 3,900 MB float32 threshold.
+A photo is slow because every question re-runs the trunk over the image
+prefix (about 1,800 positions for 1200×900), as the reference does.
 
 ## Memory
 
-The engine keeps the float32 weights in MLX arrays (2.24 GB) for its whole
-lifetime. The harness caps MLX's buffer cache at 64 MB, and the Memory section
+The engine keeps its weights in MLX arrays for its whole lifetime: 2.24 GB in
+float32, 1.12 GB in float16. float16 weights are converted on the CPU while
+loading, so MLX never holds a float32 copy. The harness caps MLX's buffer cache at 64 MB, and the Memory section
 shows `os_proc_available_memory()`: the headroom before iOS terminates the app.
 If the app is killed while loading, check the device's jetsam reports in
 *Settings › Privacy & Security › Analytics & Improvements*. Inference only runs
