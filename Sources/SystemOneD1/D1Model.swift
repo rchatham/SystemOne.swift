@@ -83,6 +83,24 @@ final class D1Model {
 
     /// Raw head logits for right-padded rows, before any temperature.
     func logits(for rows: [D1Row]) throws -> MLXArray {
+        try headLogits(for: rows, text: trunkText(for: rows))
+    }
+
+    /// Raw head logits from trunk text computed once by `trunkText(for:)`,
+    /// optionally with head weights other than the loaded ones.
+    func headLogits(for rows: [D1Row], text: MLXArray, headParameters: [String: MLXArray]? = nil) -> MLXArray {
+        head(
+            text,
+            lengths: rows.map(\.ids.count),
+            questionTypes: rows.map(\.questionType),
+            markers: rows.map(\.markers),
+            parameters: headParameters
+        )
+    }
+
+    /// `[B, T, D]` trunk output over each row's text positions, right-padded:
+    /// everything the head reads.
+    func trunkText(for rows: [D1Row]) throws -> MLXArray {
         let width = configuration.text.hiddenSize
         let totals = rows.map(\.sequenceLength)
         let longest = totals.max() ?? 0
@@ -107,11 +125,6 @@ final class D1Model {
             return padded(slice, widths: [[0, longestText - textLengths[index]], 0])
         })
         precondition(text.dim(2) == width)
-        return head(
-            text,
-            lengths: textLengths,
-            questionTypes: rows.map(\.questionType),
-            markers: rows.map(\.markers)
-        )
+        return text
     }
 }

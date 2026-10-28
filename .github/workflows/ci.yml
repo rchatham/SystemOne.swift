@@ -157,5 +157,5 @@ jobs:
           D1_MODEL_PARITY: "1"
           D1_DEVICE: gpu
         run: |
-          xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests \
+          xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests,SystemOneD1Tests.D1HeadTrainingTests \
             .build/xcode/Build/Products/Release/SystemOneD1Tests.xctest
