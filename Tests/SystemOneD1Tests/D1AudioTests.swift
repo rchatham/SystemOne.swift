@@ -74,4 +74,15 @@ final class D1AudioTests: XCTestCase {
             }
         }
     }
+
+    func testAudioRowsReusePrefixStates() throws {
+        let weights = try D1TextTests.loadWeights()
+        let model = try D1Model(weights: weights)
+        try Device.withDefaultDevice(D1TextTests.device) {
+            for testCase in try D1Fixture.load().audio.requests {
+                let clip = AudioClip(pcm16: syntheticAudio(samples: testCase.audio.samples, seed: testCase.audio.seed))
+                try checkPrefixReuse(model, media: .audio(clip), rows: testCase.rows, "\(testCase.id)")
+            }
+        }
+    }
 }

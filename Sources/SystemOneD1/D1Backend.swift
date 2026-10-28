@@ -105,9 +105,18 @@ public final class D1Backend: DecisionBackend {
         return DecisionPlan(rows: rows, decisions: decisions, usage: Usage(inputTokens: read, outputTokens: 0))
     }
 
-    // d1 currently uses the shared `microbatches(for:strategy:)` default (a
-    // padded-attention bound). The reference `_run` batches by a flat token
-    // budget instead; see `microbatches(for:strategy:)` below once overridden.
+    /// The shared padded-attention bound, costing each row's own text against
+    /// the media prefix it reads: a request's rows share one prefix whose trunk
+    /// states run once, so a row of `T` tokens costs `T × (P + T)`.
+    public func microbatches(for rows: [D1Row], strategy: BatchingStrategy) -> [[Int]] {
+        let prefix = rows.first?.prefix
+        precondition(rows.allSatisfy { $0.prefix === prefix }, "a plan's rows share one media prefix")
+        return SystemOneEngine.microbatchIndices(
+            sequenceLengths: rows.map(\.computedLength),
+            sharedPrefixLength: prefix?.length ?? 0,
+            maxAmplification: strategy.maxAmplification
+        )
+    }
 
     public func logits(for rows: [D1Row]) async throws -> BatchLogitsOutput {
         let perRow: [[Float]]

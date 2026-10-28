@@ -71,29 +71,37 @@ load, warm Metal kernels):
 
 | | float32 | float16 |
 |---|---|---|
-| Load (verify + copy) | 7.3–9.2 s | 6.7–8.4 s |
-| Text, three questions | 0.35 s | 0.27 s |
-| Photo 1200×900, three questions | 5.0 s | 3.8 s |
-| 3 s voice clip | 0.32 s | 0.21 s |
-| Photo 2560×1024 (largest prefix), three questions | 8.4 s | 6.0 s |
+| Load (verify + copy) | 8.2–9.8 s | 5.5–7.0 s |
+| Text, three questions | 0.37 s | 0.25 s |
+| Photo 1200×900, three questions | 2.9 s | 2.1 s |
+| 3 s voice clip | 0.32 s | 0.19 s |
+| Photo 2560×1024 (largest prefix), three questions | 4.5 s | 3.2 s |
 | MLX active | 2.24 GB | 1.12 GB |
-| MLX peak: 1200×900 / 2560×1024 photo | 3.36 / 3.57 GB | 1.68 / 1.78 GB |
-| Available after the run | 1.7 GB | 2.6 GB |
+| MLX peak: 1200×900 / 2560×1024 photo | 3.35 / 3.60 GB | 1.69 / 1.80 GB |
+| Available after the run | 1.7 GB | 2.75 GB |
 
 Both precisions give the same top answers; probabilities differ by under a
-percentage point. The first float16 launch after installing is slower
-(text 1.7 s, voice 0.9 s) while Metal compiles its half-precision kernels.
-On a 4 GB iPhone 13 (Release, 2,331 MB available before load), Automatic
-loaded float16 and every request passed with the same answers as the 14 Pro.
-MLX peaks were the same as the 14 Pro's float16 run (1.69 GB for the
-1200×900 photo, 1.78 GB for 2560×1024), with 1,071 MB still available at the
-end. Its timings so far come from a first launch, which includes compiling
-the Metal kernels: load 21 s, and 5.8 s for the 1200×900 photo once warm.
+percentage point. The first launch after installing is slower while Metal
+compiles its kernels (float32 text 2.6 s and voice 1.5 s; float16 text 1.4 s
+and voice 0.8 s). On a 4 GB iPhone 13 (Release, 2,331 MB available before
+load), Automatic loaded float16 and every request passed with the same answers
+as the 14 Pro. MLX peaks were the same as the 14 Pro's float16 run (1.69 GB
+for the 1200×900 photo, 1.78 GB for 2560×1024), with 1,071 MB still available
+at the end. Its timings so far come from a first launch before the prefix
+cache below, which includes compiling the Metal kernels: load 21 s, and 5.8 s
+for the 1200×900 photo once warm.
 
 The self-test prints each run's own MLX peak; the 2560×1024 photo (2,810
 prefix positions, near the 2,816 maximum) sets the 3,900 MB float32 threshold.
-A photo is slow because every question re-runs the trunk over the image
-prefix (about 1,800 positions for 1200×900), as the reference does.
+A photo request runs the trunk once over the image prefix (about 1,800
+positions for 1200×900) and caches its states; each question then runs only
+its own text positions against them. Re-running the prefix for every question,
+as the reference does, took 5.0 s / 3.8 s (float32 / float16) for the
+1200×900 photo and 8.4 s / 6.0 s for 2560×1024. The peak is set by building
+the prefix, so the cache does not lower it.
+
+If `devicectl` hangs or reports a tunnel failure, disconnect any VPN on the
+Mac: it can block the network tunnel that CoreDevice opens to the device.
 
 ## Memory
 
