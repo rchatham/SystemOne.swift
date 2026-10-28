@@ -22,6 +22,13 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   infinity; the mel front end, logits, and calibration stay float32.
   The iOS harness picks float16 when `os_proc_available_memory()` is too small
   for float32 and shows the loaded precision.
+- d1 head-only training spike (internal): `D1HeadTraining` computes a masked
+  cross-entropy over the decision head's raw logits, with the trunk frozen and
+  every head weight passed to `valueAndGrad`. `tools/d1_training_capture.py`
+  records PyTorch's loss, gradients, and one gradient-descent step in
+  `testdata/d1_training_golden_v1.json`; on the GPU, Swift matches all 31
+  head gradients to 1e-5 relative in norm, and the step's loss (3.8168 to
+  3.4239) to 1e-5. See `docs/FEDERATED.md`.
 - `SystemOneMedia`, `RGBImage` (including `init?(cgImage:)`), and `AudioClip`.
 - `ModelProfile`, `VonModelProfile`, and `D1ModelProfile` for model-agnostic
   HTTP admission and service metadata.

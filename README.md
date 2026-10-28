@@ -127,11 +127,12 @@ D1_MODEL_FOLDER=weights/d1-omni-600M swift test --filter SystemOneD1Tests
 xcodebuild build-for-testing -scheme SystemOne-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 D1_MODEL_FOLDER="$PWD/weights/d1-omni-600M" D1_MODEL_PARITY=1 D1_DEVICE=gpu \
-  xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests \
+  xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests,SystemOneD1Tests.D1HeadTrainingTests \
   "$PWD/.build/xcode/Build/Products/Debug/SystemOneD1Tests.xctest"
 
 # Regenerate or check the d1 fixture (separate venv: torch 2.14, torchvision 0.29.1, transformers 5.17)
 .venv-d1/bin/python tools/d1_golden_capture.py --check
+.venv-d1/bin/python tools/d1_training_capture.py --check   # head gradients
 ```
 
 von's installation, conversion, and parity commands are in
