@@ -23,7 +23,9 @@ SystemOne        core: question/answer types, SystemOneEngine, DecisionBackend,
 SystemOneD1      d1-omni: LFM2.5 trunk, decision head, SigLIP2 vision, FastConformer audio
 SystemOneVon     von: ModernBERT option-marker model and calibration
 SystemOneHTTP    SwiftNIO server for POST /v1/systemone, model-agnostic
+SystemOneChat    chatbot: System One routes every step, a TextGenerator writes the words
 system-one       CLI: `system-one serve`
+system-one-chat  CLI: terminal chatbot (d1 router + Apple Intelligence)
 ```
 
 A model plugs in by conforming to `DecisionBackend`: it plans each request into
@@ -102,6 +104,38 @@ bind; `SYSTEMONE_CORS_ORIGINS` is an explicit origin allowlist. The server
 bounds framing, body sizes, concurrency, and deadlines, and the codec bounds the
 work a request may plan using the served model's `ModelProfile` before any
 inference runs. HTTP requests carry text states only.
+
+## Chatbot
+
+System One never writes text, so `SystemOneChat` uses it as the chatbot's
+control flow. Each step asks d1 one `choice` question about the user's message
+alone: "What is the user asking for?" Every option is a tool, described as the
+request it handles, with `generate_text` last as the catch-all. `generate_text`
+is the only way to talk to the user; it hands the turn's tool results to a
+`TextGenerator` (Apple Intelligence via FoundationModels on macOS/iOS 26+). A
+task tool returns an observation, after which `generate_text` replies, or
+replies itself (`summarize_conversation` does).
+
+On the bundled tools d1 routes 11 of 11 probe messages correctly this way, but
+only 5 of 11 when the state also carries the conversation and the question asks
+for "the next function". It also cannot tell when a turn is finished: asked
+again with the finished tool removed, it picks the nearest remaining tool, and
+yes/no "anything left?" questions score 3 to 4 of 10. So `maxActionsPerTurn`
+defaults to 1: one routed task, then the reply.
+
+```swift
+let agent = try ChatAgent(
+    decider: try await SystemOneEngine.d1(modelFolder: modelFolder),
+    textGenerator: AppleIntelligenceTextGenerator(),
+    tools: [CurrentTimeTool(), SaveNoteTool(store: notes), ListNotesTool(store: notes)]
+)
+let turn = try await agent.send("What time is it?")  // get_current_time → generate_text
+```
+
+```bash
+xcodebuild build -scheme system-one-chat -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/xcode
+.build/xcode/Build/Products/Debug/system-one-chat --model-folder weights/d1-omni-600M
+```
 
 ## Verification
 
