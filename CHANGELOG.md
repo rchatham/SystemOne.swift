@@ -49,6 +49,9 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Changed
 
+- Safetensors headers with `"__metadata__": null`, which `mx.save_safetensors`
+  writes when given no metadata, now load with no metadata, as the reference
+  implementation reads them. Other non-object metadata is still rejected.
 - **Breaking:** the package is now `SystemOne`. Modules: `SystemOne` (core),
   `SystemOneVon`, `SystemOneD1`, `SystemOneHTTP`; the executable is
   `system-one`. `VonEngine` → `SystemOneEngine`, `VonState` →
