@@ -263,7 +263,7 @@ final class SafetensorsTests: XCTestCase {
             "{\"tensor\":{\"dtype\":1,\"shape\":[1],\"data_offsets\":[0,4]}}",
             "{\"tensor\":{\"dtype\":\"F8_E4M3\",\"shape\":[4],\"data_offsets\":[0,4]}}",
             "{\"tensor\":{\"dtype\":\"BF16\",\"shape\":[1],\"data_offsets\":[0,4]}}",
-            "{\"__metadata__\":null}",
+            "{\"__metadata__\":[]}",
             "{\"__metadata__\":{\"number\":1}}",
         ]
 
@@ -271,6 +271,15 @@ final class SafetensorsTests: XCTestCase {
             let url = try makeFile(header: Array(header.utf8), payload: [0, 0, 0, 0])
             XCTAssertThrowsError(try SafetensorsFile(contentsOf: url), "case \(index)")
         }
+    }
+
+    func testNullMetadataMeansNone() throws {
+        // `mx.save_safetensors` writes `"__metadata__": null` without metadata;
+        // the reference implementation (safetensors 0.8.0) reads it as none.
+        let header = "{\"__metadata__\":null,\"tensor\":{\"dtype\":\"F32\",\"shape\":[1],\"data_offsets\":[0,4]}}"
+        let file = try SafetensorsFile(contentsOf: makeFile(header: Array(header.utf8), payload: [0, 0, 0, 0]))
+        XCTAssertNil(file.metadata)
+        XCTAssertEqual(file.descriptors["tensor"]?.shape, [1])
     }
 
     func testRejectsInvalidShapeNumbersAndCheckedProducts() throws {
