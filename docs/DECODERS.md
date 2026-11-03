@@ -217,3 +217,27 @@ right-padded rows, `DecoderAttention` plans and `DecoderCache` prefixes as
 padded rows and for rows after a prefix that is filled in two prefills. The
 MLX tests match them within 1e-4; a Python MLX transliteration matches within
 6e-6.
+
+## LFM3 (`LFM3Trunk`)
+
+`LFM3Trunk` is d1-2B's backbone. It follows mlx-vlm's Apache-2.0 `lfm3` port
+of the LFM3 reference; transformers 5.22.1 has no LFM3. Three layer types sit
+between sandwich norms, then a final `embedding_norm`:
+- **Gated short convolutions:** as in LFM2, with 7 taps.
+- **Full-attention layers:**
+  - GQA with q/k RMSNorm.
+  - A per-head sigmoid output gate (`gate_proj`).
+  - LFM3's partial RoPE: it pairs coordinate `i` with `i + d/2` and rotates
+    only the first `angles` pairs of each half, with frequencies over the whole
+    head. On d1-2B, θ is 1e6 and half the pairs are rotated.
+- **Sliding-attention layers:** the same, over the last `sliding_window`
+  tokens (256), with full RoPE at θ 1e4.
+
+A `DecoderAttention` plan governs the full-attention layers. Sliding layers and
+convolutions stay causal, which is how d1-2B's set attention runs them.
+`tools/lfm3_fixture.py` records mlx-vlm's hidden states for:
+- padded rows with an 8-token window, so the window applies;
+- a d1-2B set-attention row;
+- rows after a prefix that is filled in two prefills.
+
+A Python MLX transliteration of the Swift code matches all of them exactly.
