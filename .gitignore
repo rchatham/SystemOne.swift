@@ -10,6 +10,8 @@ __pycache__/
 # Model weights are never committed (multi-GB)
 *.pt
 *.safetensors
+# ...except the tiny test fixtures under testdata/
+!testdata/**/*.safetensors
 *.bin
 weights/
 benchmark-results/
