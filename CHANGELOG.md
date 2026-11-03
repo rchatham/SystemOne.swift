@@ -10,7 +10,10 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
-  `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`.
+  `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`. Image and
+  audio requests run the media prefix through the trunk once and reuse its
+  keys, values, and conv state for every question (a three-question photo on
+  an iPhone 14 Pro: 5.0 s to 2.9 s).
 - `DecisionBackend`, `PlannedRow`, and `DecisionPlan`: the extension point for
   System One models; `SystemOneEngine.d1(modelFolder:)` and
   `SystemOneEngine.von(tokenizerFolder:verifiedWeightsURL:)` factories.
