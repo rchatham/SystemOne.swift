@@ -49,6 +49,7 @@ private enum ServedModel {
 private enum Backend: String, CaseIterable {
     case d1
     case d1Chat = "d1-3b"
+    case d1Set = "d1-2b"
     case d3
     case decisionTune = "decisiontune"
     case markerHead = "marker"
@@ -71,6 +72,7 @@ private let usage = """
     Backends:
       d1             LiquidAI d1-omni-600M (default), PyTorch or MLX export
       d1-3b          LiquidAI d1-3B, text decisions
+      d1-2b          LiquidAI d1-2B, noul / choice / score on text states
       d3             vllm-sr d3, d3-lite, d3-edge, ...
       decisiontune   DecisionTune 1.0
       marker         Laya or Julia-1
@@ -291,6 +293,9 @@ private func run() async throws {
         switch backend {
         case .d1Chat:
             engine = try SystemOneEngine.d1Chat(modelFolder: folder)
+            options = 255
+        case .d1Set:
+            engine = try SystemOneEngine.d1Set(modelFolder: folder)
             options = 255
         case .d3:
             engine = try SystemOneEngine.d3(modelFolder: folder)

@@ -94,7 +94,7 @@ so build the CLI with Xcode:
 ```bash
 xcodebuild build -scheme system-one -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/xcode
 .build/xcode/Build/Products/Debug/system-one serve --port 8016 --model-folder weights/d1-omni-600M
-# other backends: --backend d1-3b | d3 | decisiontune | marker | tree, with their own --model-folder
+# other backends: --backend d1-3b | d1-2b | d3 | decisiontune | marker | tree, with their own --model-folder
 # von: --tokenizer <folder> --weights <option_marker.safetensors> instead of --model-folder
 ```
 

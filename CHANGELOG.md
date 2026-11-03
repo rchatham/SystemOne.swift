@@ -20,7 +20,7 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   - A request with a `Content-Encoding` other than identity gets
     `415 Unsupported Media Type`.
 - `DecisionModelProfile` for backends that render their own prompts, and
-  `system-one serve --backend d1-3b|d3|decisiontune|marker|tree` to serve
+  `system-one serve --backend d1-3b|d1-2b|d3|decisiontune|marker|tree` to serve
   them.
 - Weight formats for the next model families: safetensors float16, bfloat16,
   and integer tensors (`SafetensorsDataType`); sharded checkpoints
