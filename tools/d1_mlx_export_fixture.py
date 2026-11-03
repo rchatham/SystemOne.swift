@@ -241,11 +241,14 @@ def write_tokenizer(folder):
     (folder / "tokenizer_config.json").write_text(json.dumps({"tokenizer_class": "PreTrainedTokenizerFast"}))
 
 
-def logits(folder):
-    """Raw option logits mlx-vlm computes for `ROWS` from a checkpoint folder."""
+def logits(folder, dtype=None):
+    """Raw option logits mlx-vlm computes for `ROWS` from a checkpoint folder,
+    in the checkpoint's own float type or in `dtype`."""
     from mlx_vlm.utils import load_model
 
     model = load_model(folder)
+    if dtype is not None:
+        model.set_dtype(dtype)
     dtype = model.encoder.embedding_norm.weight.dtype
     length = max(len(row["ids"]) for row in ROWS)
     embeds = mx.stack([
@@ -294,6 +297,10 @@ def main():
                 shutil.copy(source / "tokenizer.json", folder / "tokenizer.json")
                 shutil.copy(source / "tokenizer_config.json", folder / "tokenizer_config.json")
             results[name] = logits(folder)
+            if name == "mlx-8bit":
+                # float16 quantized kernels round differently enough to move these
+                # random-weight logits by ~0.03; float32 compute pins the export.
+                results["mlx-8bit-float32"] = logits(folder, dtype=mx.float32)
             for extra in ("tokenizer.json", "tokenizer_config.json"):
                 (folder / extra).unlink(missing_ok=True)
 
