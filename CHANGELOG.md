@@ -74,6 +74,15 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   reference's prompt, single-token option codes, max-pooled next-token
   readout, and answers; a request's questions share one prefilled state.
   Goldens in `testdata/d1_3b_tiny/` (`tools/d1_3b_fixture.py`).
+- `LFM3Trunk` (`SystemOneDecoders`): d1-2B's LFM3 backbone (7-tap gated
+  convolutions, gated GQA with LFM3's partial RoPE, sliding attention, and
+  sandwich norms), checked against mlx-vlm with `testdata/lfm3_tiny/`
+  (`tools/lfm3_fixture.py`).
+- `D1SetBackend` (`SystemOneD1`): d1-2B's noul, choice, and score answers
+  under set attention, with escaped caller text, `d1_codes` option codes,
+  calibrated temperatures, and median score levels. Rows and answers are
+  checked against mlx-vlm's `d1_lfm3_vl` with `testdata/d1_2b_tiny/`
+  (`tools/d1_2b_fixture.py`).
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
   `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`.
