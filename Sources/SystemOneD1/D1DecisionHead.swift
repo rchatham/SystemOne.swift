@@ -42,13 +42,10 @@ final class D1DecisionHead {
         layers = (0..<weights.configuration.headLayers).map { index in
             let prefix = "head.head.layers.\(index)"
             func linear(_ name: String) -> Linear {
-                Linear(weight: weights.array("\(prefix).\(name).weight"), bias: weights.array("\(prefix).\(name).bias"))
+                weights.linear("\(prefix).\(name)")
             }
             return Layer(
-                inProjection: Linear(
-                    weight: weights.array("\(prefix).self_attn.in_proj_weight"),
-                    bias: weights.array("\(prefix).self_attn.in_proj_bias")
-                ),
+                inProjection: weights.headInProjection(prefix),
                 outProjection: linear("self_attn.out_proj"),
                 norm1Weight: weights.array("\(prefix).norm1.weight"),
                 norm1Bias: weights.array("\(prefix).norm1.bias"),
@@ -60,8 +57,8 @@ final class D1DecisionHead {
         }
         scorerNormWeight = weights.array("head.scorer.0.weight")
         scorerNormBias = weights.array("head.scorer.0.bias")
-        scorerDense = Linear(weight: weights.array("head.scorer.1.weight"), bias: weights.array("head.scorer.1.bias"))
-        scorerOutput = Linear(weight: weights.array("head.scorer.3.weight"), bias: weights.array("head.scorer.3.bias"))
+        scorerDense = weights.linear("head.scorer.1")
+        scorerOutput = weights.linear("head.scorer.3")
     }
 
     /// Scores marker positions of right-padded text rows.

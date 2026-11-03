@@ -90,14 +90,20 @@ jobs:
       - name: MLX tests (CPU)
         env:
           SYSTEMONE_MLX_TESTS: "1"
-        run: xcrun xctest .build/xcode/Build/Products/Debug/SystemOneTests.xctest
+        run: |
+          for bundle in SystemOneTests SystemOneD1Tests; do
+            xcrun xctest ".build/xcode/Build/Products/Debug/$bundle.xctest"
+          done
 
       - name: MLX tests (GPU, informational)
         continue-on-error: true
         env:
           SYSTEMONE_MLX_TESTS: "1"
           SYSTEMONE_MLX_DEVICE: gpu
-        run: xcrun xctest .build/xcode/Build/Products/Debug/SystemOneTests.xctest
+        run: |
+          for bundle in SystemOneTests SystemOneD1Tests; do
+            xcrun xctest ".build/xcode/Build/Products/Debug/$bundle.xctest"
+          done
 
   model-parity:
     name: Production-weight GPU parity
