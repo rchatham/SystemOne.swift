@@ -4,6 +4,7 @@ import SystemOne
 public enum ChatError: Error, Equatable, LocalizedError, Sendable {
     case duplicateToolName(String)
     case textGeneratorUnavailable(String)
+    case routerUnavailable(String)
 
     public var errorDescription: String? {
         switch self {
@@ -11,6 +12,8 @@ public enum ChatError: Error, Equatable, LocalizedError, Sendable {
             return "Two tools share the name '\(name)'; the router needs unique option keys."
         case .textGeneratorUnavailable(let reason):
             return "Apple Intelligence is unavailable: \(reason)"
+        case .routerUnavailable(let reason):
+            return "The router could not be reached: \(reason)"
         }
     }
 }
