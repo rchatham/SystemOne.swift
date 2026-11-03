@@ -91,7 +91,7 @@ jobs:
         env:
           SYSTEMONE_MLX_TESTS: "1"
         run: |
-          for bundle in SystemOneTests SystemOneD1Tests; do
+          for bundle in SystemOneTests SystemOneD1Tests SystemOneEncodersTests; do
             xcrun xctest ".build/xcode/Build/Products/Debug/$bundle.xctest"
           done
 
@@ -101,7 +101,7 @@ jobs:
           SYSTEMONE_MLX_TESTS: "1"
           SYSTEMONE_MLX_DEVICE: gpu
         run: |
-          for bundle in SystemOneTests SystemOneD1Tests; do
+          for bundle in SystemOneTests SystemOneD1Tests SystemOneEncodersTests; do
             xcrun xctest ".build/xcode/Build/Products/Debug/$bundle.xctest"
           done
 

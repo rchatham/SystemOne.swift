@@ -24,6 +24,12 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   export schema matching the published tensor names, and quantized linears and
   token embedding. `D1Weights.init(modelFolder:configuration:artifact:precision:)`
   opens either; `D1Backend` uses it.
+- `SystemOneEncoders` (Apache-2.0): `ModernBERTEncoder`, a config-driven
+  ModernBERT / mmBERT / Ettin encoder, and `EncoderAttention` for padded rows,
+  explicit position ids, and per-row visibility (tree layouts with the sliding
+  window on position ids). Checked against transformers' `ModernBertModel` with
+  `testdata/modernbert_tiny/` (`tools/modernbert_fixture.py`). See
+  [docs/ENCODERS.md](docs/ENCODERS.md).
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
   `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`.
