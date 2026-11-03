@@ -1143,6 +1143,15 @@ private final class SystemOneHTTPChannelHandler: ChannelInboundHandler, @uncheck
             finishImmediate(
                 request, response: json(.ok, Data(codec.profile.modelsJSON.utf8), origin, keepAlive), context: context)
         case (.POST, "/v1/systemone"):
+            // Request bodies are read as sent; a compressed body (TypeSafe's SDK sends
+            // zstd above 1 KB when it can) gets 415 so the client resends it plainly.
+            guard !Self.hasContentCoding(request.head.headers) else {
+                finishImmediate(
+                    request,
+                    response: jsonError(.unsupportedMediaType, "Unsupported Media Type", origin, keepAlive),
+                    context: context)
+                return
+            }
             evaluate(request, origin: origin, keepAlive: keepAlive, context: context)
         default:
             var headers = HTTPHeaders()
@@ -1157,6 +1166,14 @@ private final class SystemOneHTTPChannelHandler: ChannelInboundHandler, @uncheck
                     extraHeaders: headers
                 ), context: context)
         }
+    }
+
+    /// Whether `Content-Encoding` names any coding other than `identity`.
+    static func hasContentCoding(_ headers: HTTPHeaders) -> Bool {
+        headers["content-encoding"]
+            .flatMap { $0.split(separator: ",") }
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .contains { !$0.isEmpty && $0 != "identity" }
     }
 
     private func finishImmediate(

@@ -94,6 +94,7 @@ so build the CLI with Xcode:
 ```bash
 xcodebuild build -scheme system-one -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/xcode
 .build/xcode/Build/Products/Debug/system-one serve --port 8016 --model-folder weights/d1-omni-600M
+# other backends: --backend d1-3b | d3 | decisiontune | marker | tree, with their own --model-folder
 # von: --tokenizer <folder> --weights <option_marker.safetensors> instead of --model-folder
 ```
 
@@ -104,6 +105,17 @@ bind; `SYSTEMONE_CORS_ORIGINS` is an explicit origin allowlist. The server
 bounds framing, body sizes, concurrency, and deadlines, and the codec bounds the
 work a request may plan using the served model's `ModelProfile` before any
 inference runs. HTTP requests carry text states only.
+
+The request schema follows TypeSafe's:
+- `instructions` is optional. A noul without it needs criteria.
+- Criterion values may be strings, objects, arrays or null. Objects and
+  arrays reach the model as their JSON text.
+- A question may list as many options as the served model allows: 64 for
+  d1-omni and von, 255 for the decoder backends.
+- `GET /v1/models` lists the model in both TypeSafe's `models` shape and
+  OpenAI's `data` shape.
+- A compressed request body (`Content-Encoding: zstd` or any other coding)
+  gets 415, so the client resends it plainly.
 
 ## Verification
 

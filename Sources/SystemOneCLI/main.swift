@@ -4,6 +4,8 @@ import Foundation
 import SystemOneHTTP
 import SystemOne
 import SystemOneD1
+import SystemOneDecoders
+import SystemOneEncoders
 import SystemOneVon
 
 private enum CLIError: Error, LocalizedError {
@@ -37,8 +39,20 @@ private enum CLIError: Error, LocalizedError {
 private enum ServedModel {
     /// LiquidAI d1-omni from a local snapshot folder.
     case d1(folder: URL)
+    /// Another decision backend from a local folder (`--backend`).
+    case folder(backend: Backend, folder: URL)
     /// von from its tokenizer folder and converted, verified safetensors.
     case von(tokenizerFolder: URL, weightsFile: URL)
+}
+
+/// The decision backends `--backend` serves from a model folder.
+private enum Backend: String, CaseIterable {
+    case d1
+    case d1Chat = "d1-3b"
+    case d3
+    case decisionTune = "decisiontune"
+    case markerHead = "marker"
+    case treeDecider = "tree"
 }
 
 private struct ServeOptions {
@@ -49,10 +63,18 @@ private struct ServeOptions {
 
 private let usage = """
     Usage:
-      system-one serve --port <port> --model-folder <local-d1-snapshot> [--host 127.0.0.1]
+      system-one serve --port <port> --model-folder <local-folder> [--backend <backend>] [--host 127.0.0.1]
       system-one serve --port <port> --tokenizer <local-folder> --weights <local-safetensors> [--host 127.0.0.1]
 
-    The first form serves d1-omni-600M; the second serves the deprecated von model.
+    The first form serves a model folder; the second serves the deprecated von model.
+
+    Backends:
+      d1             LiquidAI d1-omni-600M (default), PyTorch or MLX export
+      d1-3b          LiquidAI d1-3B, text decisions
+      d3             vllm-sr d3, d3-lite, d3-edge, ...
+      decisiontune   DecisionTune 1.0
+      marker         Laya or Julia-1
+      tree           tasksource-decider-nano
 
     Environment:
       SYSTEMONE_API_KEY          Bearer token required by POST /v1/systemone when set.
@@ -67,12 +89,13 @@ private func parseServeOptions(_ arguments: [String]) throws -> ServeOptions {
     var tokenizerPath: String?
     var weightsPath: String?
     var modelFolderPath: String?
+    var backendName: String?
     var index = 1
     var seen = Set<String>()
 
     while index < arguments.count {
         let option = arguments[index]
-        guard ["--host", "--port", "--tokenizer", "--weights", "--model-folder"].contains(option) else {
+        guard ["--host", "--port", "--tokenizer", "--weights", "--model-folder", "--backend"].contains(option) else {
             throw CLIError.usage("Unknown argument '\(option)'.\n\n\(usage)")
         }
         guard seen.insert(option).inserted else {
@@ -89,6 +112,7 @@ private func parseServeOptions(_ arguments: [String]) throws -> ServeOptions {
         case "--tokenizer": tokenizerPath = value
         case "--weights": weightsPath = value
         case "--model-folder": modelFolderPath = value
+        case "--backend": backendName = value
         default: preconditionFailure("validated option")
         }
         index += 1
@@ -113,13 +137,24 @@ private func parseServeOptions(_ arguments: [String]) throws -> ServeOptions {
         }
     }
 
+    let backend = try backendName.map { name -> Backend in
+        guard let backend = Backend(rawValue: name) else {
+            throw CLIError.usage("Unknown backend '\(name)'.\n\n\(usage)")
+        }
+        return backend
+    } ?? .d1
     let model: ServedModel
     switch (modelFolderPath, tokenizerPath, weightsPath) {
     case (let folderPath?, nil, nil):
         let folder = URL(fileURLWithPath: folderPath).standardizedFileURL
         try requireDirectory(folder, option: "--model-folder", fileManager: fileManager)
-        try requireFiles(["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"], in: folder)
-        model = .d1(folder: folder)
+        if backend == .d1 {
+            try requireFiles(["config.json", "tokenizer.json", "tokenizer_config.json"], in: folder)
+            model = .d1(folder: folder)
+        } else {
+            // Each backend's loader names any file it misses.
+            model = .folder(backend: backend, folder: folder)
+        }
     case (nil, let tokenizerPath?, let weightsPath?):
         let tokenizerURL = URL(fileURLWithPath: tokenizerPath).standardizedFileURL
         let weightsURL = URL(fileURLWithPath: weightsPath).standardizedFileURL
@@ -251,6 +286,28 @@ private func run() async throws {
         engine = try await SystemOneEngine.von(
             tokenizerFolder: tokenizerFolder, verifiedWeightsURL: weightsFile)
         profile = VonModelProfile()
+    case .folder(let backend, let folder):
+        let options: Int
+        switch backend {
+        case .d1Chat:
+            engine = try SystemOneEngine.d1Chat(modelFolder: folder)
+            options = 255
+        case .d3:
+            engine = try SystemOneEngine.d3(modelFolder: folder)
+            options = 255
+        case .decisionTune:
+            engine = try SystemOneEngine.decisionTune(modelFolder: folder)
+            options = 64
+        case .markerHead:
+            engine = try SystemOneEngine.markerHead(modelFolder: folder)
+            options = 64
+        case .treeDecider:
+            engine = try SystemOneEngine.treeDecider(modelFolder: folder)
+            options = 64
+        case .d1:
+            preconditionFailure("d1 is served by .d1")
+        }
+        profile = DecisionModelProfile(modelID: engine.modelID, maximumOptionsPerQuestion: options)
     }
     guard !signalWaiter.receivedSignal else { return }
 
