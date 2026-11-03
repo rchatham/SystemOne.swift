@@ -81,6 +81,8 @@ let package = Package(
             name: "SystemOneDecoders",
             dependencies: [
                 "SystemOne",
+                .product(name: "Hub", package: "swift-transformers"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
             ],

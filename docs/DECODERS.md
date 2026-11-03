@@ -127,3 +127,66 @@ for the 8-bit export.
 The Swift tests check both float layouts against transformers, and the 8-bit
 export against mlx-lm, within 2e-3. mlx-lm itself differs from transformers by
 up to 6e-4 on this model, whose activations reach about 4.
+
+## d3 (`D3Backend`)
+
+The d3 models (vllm-sr, Apache-2.0) are Qwen3.5 checkpoints with a 255-way
+answer-code readout, packaged with `decision_config.json`
+(`d3-code-readout-v1`). The backend follows the reference's `d3_format.py`
+and `d3_runtime.py`.
+
+- **Prompt:** one per question. The system message is fixed. The user turn is:
+  ```
+  State:
+  …
+
+  Question:
+  …
+
+  Options:
+  A: key: description
+  …
+
+  Reply with only the code of the best option.
+  ```
+  It goes through Qwen's ChatML template with thinking off (`QwenChat`). Fixed
+  rules:
+  - An empty text state reads `(empty)`.
+  - Empty instructions read `Choose the best matching option.`
+  - A choice option without a description shows its key alone.
+  - A noul shows `false` then `true`, falling back to `No / false` and
+    `Yes / true`.
+  - A score is a choice over its 2–10 level texts.
+- **Tokens:** the prompt is tokenized as rendered. No BOS is added, and
+  special-token text becomes its token.
+- **Attention:** under `noncausal_full_attention`, the full-attention layers
+  see the whole prompt; the Gated DeltaNet layers stay causal.
+- **Readout:**
+  - The final-norm state at the prompt's last token (in float32) is multiplied
+    by `readout.safetensors`' `weight`, `[255, hidden]`.
+  - The first k codes are divided by the temperature and softmaxed.
+- **Answers:**
+  - Choice takes the first maximum, with confidence `1 − H / log k`.
+  - Noul is `P(true)`.
+  - Score is the expected level index, with the legend in compact sorted JSON.
+
+The reference left-pads its batches and keeps the padding in the positions.
+Its README notes that this can flip about 0.17% of near-tie decisions. This
+backend right-pads, so each row reads as the reference reads it unpadded.
+
+At load time, every answer code must encode to its listed single token. A
+tokenizer that disagrees fails loudly instead of misreading prompts.
+
+### Verification
+
+`tools/d3_fixture.py` copies the reference's prompt and answer code. It
+records:
+- the full prompt text for three states × six questions, covering choices with
+  null and empty descriptions, nouls with and without criteria, text and
+  `{what, examples}` scores, and a one-option choice;
+- tiny-readout answers through transformers on the tiny Qwen3.5 trunk, with a
+  byte-level stub tokenizer.
+
+Swift reproduces the prompts byte for byte. The MLX test runs each state's six
+questions in one right-padded batch and matches the unbatched reference
+answers within 5e-3. A Python MLX transliteration matches within 7e-6.

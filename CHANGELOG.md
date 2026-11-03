@@ -46,6 +46,12 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   logits. The gated delta rule runs in chunks as transformers does. Checked
   against transformers and mlx-lm with `testdata/qwen35_tiny/`
   (`tools/qwen35_fixture.py`). See [docs/DECODERS.md](docs/DECODERS.md).
+- `D3Backend`: the d3 family (vllm-sr d3, -lite, -mini, -flash, -edge) on the
+  Qwen3.5 trunk, with the reference's prompt (`QwenChat` ChatML, thinking off),
+  `noncausal_full_attention`, the 255-way answer-code readout, and its choice,
+  noul, and score answers. `HubDecoderTokenizer` reads the folder's tokenizer.
+  Prompt goldens and tiny-readout answers in `testdata/d3_tiny/`
+  (`tools/d3_fixture.py`).
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
   `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`.
