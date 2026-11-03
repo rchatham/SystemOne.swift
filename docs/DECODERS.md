@@ -79,7 +79,7 @@ always causal.
 options that restart after a shared prefix. Default positions take MLX's fused
 RoPE; explicit ones take an explicit rotation computed as transformers does.
 
-### Prefix caches (`Qwen35Cache`)
+### Prefix caches (`DecoderCache`)
 
 `prefill(_:cache:)` extends a cache with one row of tokens under a causal
 plan. The cache records, per layer:

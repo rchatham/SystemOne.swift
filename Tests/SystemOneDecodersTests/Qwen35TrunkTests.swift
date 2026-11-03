@@ -226,7 +226,7 @@ final class Qwen35TrunkRuntimeTests: XCTestCase {
         try Device.withDefaultDevice(device) {
             let model = try trunk("transformers")
             // Two prefills, the second across the cached convolution window and state.
-            let cache = Qwen35Cache()
+            let cache = DecoderCache()
             let first = try model.prefill(Array(fixture.prefix[..<20]), cache: cache)
             let branch = cache.copy()
             let second = try model.prefill(Array(fixture.prefix[20...]), cache: cache)

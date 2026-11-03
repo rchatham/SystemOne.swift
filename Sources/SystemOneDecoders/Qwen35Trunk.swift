@@ -3,31 +3,6 @@ import MLX
 import MLXNN
 import SystemOne
 
-/// A cached prefix: per layer, attention keys and values, or the convolution
-/// window and recurrent state. Built by ``Qwen35Trunk/prefill(_:cache:)`` from
-/// one row; reading it never changes it, so one prefix can serve many rows.
-public final class Qwen35Cache: @unchecked Sendable {
-    /// Tokens the cache holds.
-    public internal(set) var length = 0
-    var keys: [Int: MLXArray] = [:]
-    var values: [Int: MLXArray] = [:]
-    var convolution: [Int: MLXArray] = [:]
-    var recurrent: [Int: MLXArray] = [:]
-
-    public init() {}
-
-    /// An independent copy to extend along another branch.
-    public func copy() -> Qwen35Cache {
-        let copy = Qwen35Cache()
-        copy.length = length
-        copy.keys = keys
-        copy.values = values
-        copy.convolution = convolution
-        copy.recurrent = recurrent
-        return copy
-    }
-}
-
 /// How a checkpoint stores the trunk.
 public enum Qwen35WeightLayout: Equatable, Sendable {
     /// transformers: zero-centred RMSNorm weights (`x · (1 + w)`) and
@@ -201,7 +176,7 @@ public final class Qwen35Trunk {
     /// unspecified. `prefix` is read, not changed; a one-row prefix serves
     /// every row.
     public func callAsFunction(
-        _ ids: [[Int]], attention: DecoderAttention? = nil, prefix: Qwen35Cache? = nil
+        _ ids: [[Int]], attention: DecoderAttention? = nil, prefix: DecoderCache? = nil
     ) throws -> MLXArray {
         let width = try validate(ids)
         let attention = attention ?? DecoderAttention(lengths: Array(repeating: width, count: ids.count))
@@ -215,7 +190,7 @@ public final class Qwen35Trunk {
     /// Extends `cache` with one row of tokens under a causal plan and returns
     /// their hidden states `[1, length, hidden]`.
     @discardableResult
-    public func prefill(_ ids: [Int], cache: Qwen35Cache) throws -> MLXArray {
+    public func prefill(_ ids: [Int], cache: DecoderCache) throws -> MLXArray {
         let width = try validate([ids])
         let attention = DecoderAttention(lengths: [width])
         return try forward([ids], width: width, attention: attention, read: cache, write: cache)
@@ -245,7 +220,7 @@ public final class Qwen35Trunk {
     }
 
     private func forward(
-        _ ids: [[Int]], width: Int, attention: DecoderAttention, read: Qwen35Cache?, write: Qwen35Cache?
+        _ ids: [[Int]], width: Int, attention: DecoderAttention, read: DecoderCache?, write: DecoderCache?
     ) throws -> MLXArray {
         let rows = ids.count
         let prefixLength = read?.length ?? 0
@@ -295,7 +270,7 @@ public final class Qwen35Trunk {
 
     private func attend(
         _ x: MLXArray, _ block: Attention, layer: Int, mask: MLXFast.ScaledDotProductAttentionMaskMode,
-        rotation: (cos: MLXArray, sin: MLXArray)?, offset: Int, read: Qwen35Cache?, write: Qwen35Cache?
+        rotation: (cos: MLXArray, sin: MLXArray)?, offset: Int, read: DecoderCache?, write: DecoderCache?
     ) -> MLXArray {
         let c = configuration
         let (rows, width) = (x.dim(0), x.dim(1))
@@ -337,7 +312,7 @@ public final class Qwen35Trunk {
         normalize(x, weight)
     }
 
-    private func mix(_ x: MLXArray, _ block: DeltaNet, layer: Int, read: Qwen35Cache?, write: Qwen35Cache?) -> MLXArray {
+    private func mix(_ x: MLXArray, _ block: DeltaNet, layer: Int, read: DecoderCache?, write: DecoderCache?) -> MLXArray {
         let c = configuration
         let (rows, width) = (x.dim(0), x.dim(1))
         let kernel = c.convolutionKernel

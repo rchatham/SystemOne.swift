@@ -41,7 +41,7 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   for decision readouts. It loads transformers checkpoints and mlx-lm exports,
   dense or quantized, under any published prefix. `DecoderAttention` gives
   causal, bidirectional (d3-style), or per-row visibility plans with explicit
-  positions; `Qwen35Cache` holds a one-row prefix that many rows can read; and
+  positions; `DecoderCache` holds a one-row prefix that many rows can read; and
   `readoutRows(_:)` gathers output-embedding rows without full-vocabulary
   logits. The gated delta rule runs in chunks as transformers does. Checked
   against transformers and mlx-lm with `testdata/qwen35_tiny/`
