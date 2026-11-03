@@ -60,6 +60,9 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Changed
 
+- Safetensors headers with `"__metadata__": null`, which `mx.save_safetensors`
+  writes when given no metadata, now load with no metadata, as the reference
+  implementation reads them. Other non-object metadata is still rejected.
 - **Breaking:** `D1Weights.safetensors` is now `store` (`any TensorStore`), and
   `D1Weights.init(safetensors:configuration:precision:)` is
   `init(store:configuration:precision:quantization:)`.
