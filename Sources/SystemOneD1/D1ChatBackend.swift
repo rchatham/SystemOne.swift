@@ -15,12 +15,14 @@ public enum D1ChatPrompt {
     static let yesForms = ["yes", "Yes", "YES"]
     static let noForms = ["no", "No", "NO"]
     /// Codes tried, in order, when an option's own code is not one free token.
-    static let fallbackPool: [String] =
-        (65...90).map { String(UnicodeScalar(UInt8($0))) }
-        + (0..<100).map { String(format: "%02d", $0) }
-        + (97...122).map { String(UnicodeScalar(UInt8($0))) }
-        + (0..<200).map { "#\($0)" }
-        + (65...90).flatMap { a in (65...90).map { b in String(UnicodeScalar(UInt8(a))) + String(UnicodeScalar(UInt8(b))) } }
+    static let fallbackPool: [String] = {
+        let upper: [String] = (65...90).map { String(UnicodeScalar(UInt8($0))) }
+        let digits: [String] = (0..<100).map { String(format: "%02d", $0) }
+        let lower: [String] = (97...122).map { String(UnicodeScalar(UInt8($0))) }
+        let numbered: [String] = (0..<200).map { "#\($0)" }
+        let pairs: [String] = upper.flatMap { first in upper.map { first + $0 } }
+        return upper + digits + lower + numbered + pairs
+    }()
 
     /// The text before the questions: the user turn's head and the state.
     public static func prefix(state: SystemOneState) -> String {
