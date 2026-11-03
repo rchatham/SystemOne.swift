@@ -383,6 +383,9 @@ private struct SafetensorsHeader {
         var descriptors: [String: SafetensorsTensorDescriptor] = [:]
         for (name, value) in entries {
             if name == "__metadata__" {
+                // `null` is no metadata, as the reference implementation reads it
+                // (`mx.save_safetensors` writes it when given none).
+                if case .null = value { continue }
                 metadata = try parseMetadata(value)
             } else {
                 descriptors[name] = try parseDescriptor(name: name, value: value)
