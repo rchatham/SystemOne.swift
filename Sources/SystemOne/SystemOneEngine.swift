@@ -173,11 +173,15 @@ public actor SystemOneEngine {
 extension SystemOneEngine {
     /// Stable length-sorted row indices grouped by bounded padded attention work.
     ///
+    /// A row of length `L` costs `L × (sharedPrefixLength + L)`: its queries
+    /// attend to its own keys plus a prefix every row shares and that is
+    /// already computed (`L²` when there is none).
     /// When `maxAmplification` is `nil` each row is its own singleton batch.
     /// Otherwise the absolute boundary `max(candidateMaximum, 1_048_576)` and the
     /// relative `paddedWork <= maxAmplification × usefulWork` gate are applied.
     public static func microbatchIndices(
         sequenceLengths: [Int],
+        sharedPrefixLength: Int = 0,
         maxAmplification: Double?
     ) -> [[Int]] {
         let sortedIndices = sequenceLengths.indices.sorted { lhs, rhs in
@@ -187,26 +191,27 @@ extension SystemOneEngine {
         }
         guard !sortedIndices.isEmpty else { return [] }
 
-        func squared(_ length: Int) -> Int? {
-            guard length >= 0 else { return nil }
-            let (result, overflow) = length.multipliedReportingOverflow(by: length)
-            return overflow ? nil : result
+        func work(_ length: Int) -> Int? {
+            guard length >= 0, sharedPrefixLength >= 0 else { return nil }
+            let (keys, keysOverflow) = sharedPrefixLength.addingReportingOverflow(length)
+            let (result, overflow) = length.multipliedReportingOverflow(by: keys)
+            return keysOverflow || overflow ? nil : result
         }
 
         var batches: [[Int]] = []
         var current: [Int] = []
-        var maximumSquared = 0
-        var sumSquared = 0
-        var sumSquaredIsUnbounded = false
+        var maximumWork = 0
+        var sumWork = 0
+        var sumWorkIsUnbounded = false
 
         for index in sortedIndices {
-            guard let rowSquared = squared(sequenceLengths[index]) else {
+            guard let rowWork = work(sequenceLengths[index]) else {
                 if !current.isEmpty {
                     batches.append(current)
                     current = []
-                    maximumSquared = 0
-                    sumSquared = 0
-                    sumSquaredIsUnbounded = false
+                    maximumWork = 0
+                    sumWork = 0
+                    sumWorkIsUnbounded = false
                 }
                 batches.append([index])
                 continue
@@ -214,9 +219,9 @@ extension SystemOneEngine {
 
             guard !current.isEmpty else {
                 current = [index]
-                maximumSquared = rowSquared
-                sumSquared = rowSquared
-                sumSquaredIsUnbounded = false
+                maximumWork = rowWork
+                sumWork = rowWork
+                sumWorkIsUnbounded = false
                 continue
             }
 
@@ -224,19 +229,19 @@ extension SystemOneEngine {
                 // nil means sequential: each row is a singleton batch
                 batches.append(current)
                 current = [index]
-                maximumSquared = rowSquared
-                sumSquared = rowSquared
-                sumSquaredIsUnbounded = false
+                maximumWork = rowWork
+                sumWork = rowWork
+                sumWorkIsUnbounded = false
                 continue
             }
 
-            let candidateMaximum = max(maximumSquared, rowSquared)
+            let candidateMaximum = max(maximumWork, rowWork)
             let (candidateCount, countOverflow) = current.count.addingReportingOverflow(1)
             let (paddedWork, paddedOverflow) = candidateCount.multipliedReportingOverflow(
                 by: candidateMaximum
             )
-            let (candidateSum, sumOverflow) = sumSquared.addingReportingOverflow(rowSquared)
-            let candidateSumIsUnbounded = sumSquaredIsUnbounded || sumOverflow
+            let (candidateSum, sumOverflow) = sumWork.addingReportingOverflow(rowWork)
+            let candidateSumIsUnbounded = sumWorkIsUnbounded || sumOverflow
             let (amplifiedWork, usefulOverflow) = candidateSum.multipliedReportingOverflow(
                 by: Int(amplification * 256)
             )
@@ -249,15 +254,15 @@ extension SystemOneEngine {
 
             if fits {
                 current.append(index)
-                maximumSquared = candidateMaximum
-                sumSquared = candidateSumIsUnbounded ? 0 : candidateSum
-                sumSquaredIsUnbounded = candidateSumIsUnbounded
+                maximumWork = candidateMaximum
+                sumWork = candidateSumIsUnbounded ? 0 : candidateSum
+                sumWorkIsUnbounded = candidateSumIsUnbounded
             } else {
                 batches.append(current)
                 current = [index]
-                maximumSquared = rowSquared
-                sumSquared = rowSquared
-                sumSquaredIsUnbounded = false
+                maximumWork = rowWork
+                sumWork = rowWork
+                sumWorkIsUnbounded = false
             }
         }
         if !current.isEmpty {
