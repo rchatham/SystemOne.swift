@@ -53,3 +53,51 @@ it records transformers 5.22.1's hidden states for a padded batch and for a tree
 layout passed as custom per-type 4-D masks with explicit position ids. Swift
 matches both within 1e-4 on the CPU in CI. Shifting the positions by a constant
 leaves the output unchanged, which ties the explicit rotation to the fused kernel.
+
+## Decision models
+
+Three open encoder decision models run as `DecisionBackend`s. Each follows its
+reference code's prompt and head. The tokenizer comes from the model folder
+(`HubEncoderTokenizer`, swift-transformers, nothing downloaded).
+
+| Backend | Models | Prompt per question | Head | Answers |
+|---|---|---|---|---|
+| `DecisionTuneBackend` | DecisionTune 1.0 | `[CLS] instructions [SEP] ([MASK] option)… [SEP] state [SEP]` | `Linear(d, 1)` at each `[MASK]` | plain softmax; noul options are `yes`/`no`, `noul = P(yes)`; confidence is the top probability |
+| `MarkerHeadBackend` | Laya (English, multilingual), Julia-1 | `[CLS] "<type> question: …" [SEP] ([MASK] " option")… [SEP] state [SEP]`, options capped at 48 tokens and shrunk to fit the head budget | type embedding, PyTorch `TransformerEncoderLayer`s, then LayerNorm → Linear → GELU → Linear at each `[MASK]` | Laya: per-bucket temperature, confidence `1 − H/log k`; Julia: no temperature, top probability; `noul = P(true)` |
+| `TreeDeciderBackend` | tasksource-decider-nano | one row per request: `[CLS] state [SEP]`, each `"Question: q\nOption:"`, each `" option [SEP]"` | `Linear(d, 1)` over each option block's mean state | plain softmax; choice and noul only |
+
+Option texts follow each reference. Laya renders `key: description`,
+`level i: …`, and `false: …`/`true: …` with default descriptions. Julia reads
+the descriptions alone and rejects a choice option without one. The tasksource
+decider drops placeholder keys (`option_1`, `a`, `(b)`). Score levels in the
+`{what, examples}` form are rendered as Python prints the dict.
+
+The tasksource decider's tree layout comes from `decider.py`'s "shared" layout,
+"opt" pooling, and "cached" attention:
+- every token sees the state;
+- question and option tokens see their question block;
+- option tokens see their own option.
+
+Positions follow the virtual `(state, question, option)` pair. Rows hold at most
+`max(2P, P + 2048)` tokens for a `P`-token state, and the state is repeated in
+each row. A question whose options spill over repeats its block in the next row.
+
+`SystemOneEngine.decisionTune(modelFolder:)`, `.markerHead(modelFolder:)`, and
+`.treeDecider(modelFolder:)` build engines from local folders.
+
+### Verification
+
+`tools/encoder_decisions_fixture.py` writes `testdata/encoder_decisions/`. Each
+model's rendering code is copied from its reference, and the script records the
+packed ids and markers for a text state and a fields state across choice, noul,
+and score questions, with the ModernBERT tokenizer. It also records a 12-option
+Laya prompt that hits the head budget, and the tasksource tree rows. Swift
+matches these exactly in `swift test`.
+
+For numerics, the script runs each reference head with random weights on the
+tiny ModernBERT of `testdata/modernbert_tiny/large-rope`:
+- DecisionTune's linear head;
+- Laya's two-layer `TransformerEncoder` head with the type embedding;
+- the tasksource scorer on a tree row with custom masks and position ids.
+
+The MLX tests match each within 1e-4 on the CPU in CI.

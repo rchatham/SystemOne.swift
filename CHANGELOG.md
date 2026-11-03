@@ -30,6 +30,12 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   window on position ids). Checked against transformers' `ModernBertModel` with
   `testdata/modernbert_tiny/` (`tools/modernbert_fixture.py`). See
   [docs/ENCODERS.md](docs/ENCODERS.md).
+- Encoder decision backends in `SystemOneEncoders`: `DecisionTuneBackend`
+  (DecisionTune 1.0), `MarkerHeadBackend` (Laya and Julia-1), and
+  `TreeDeciderBackend` (tasksource-decider-nano, with its tree attention). The
+  prompts match each reference's packed ids, and the heads match the reference
+  heads on a tiny encoder (`testdata/encoder_decisions/`,
+  `tools/encoder_decisions_fixture.py`).
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
   `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`.
