@@ -18,8 +18,8 @@ class MLXRuntimeTestCase: XCTestCase {
         }
     }
 
-    func onDevice(_ body: () throws -> Void) rethrows {
-        try Device.withDefaultDevice(Self.device, body)
+    func onDevice(_ body: () throws -> Void) throws {
+        try Device.withDefaultDevice(Self.device) { try body() }
     }
 
     func assertClose(

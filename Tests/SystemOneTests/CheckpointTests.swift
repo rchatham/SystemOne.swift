@@ -40,18 +40,27 @@ final class CheckpointTests: XCTestCase {
     func testRejectsAnIndexThatDisagreesWithItsShards() throws {
         let folder = try makeFolder()
         try SafetensorsWriter.write([.float32("a", [1], [1])], to: folder.appendingPathComponent(first))
-        try SafetensorsWriter.write([.float32("b", [1], [2])], to: folder.appendingPathComponent(second))
+        try SafetensorsWriter.write(
+            [.float32("b", [1], [2]), .float32("c", [1], [3])], to: folder.appendingPathComponent(second)
+        )
 
-        try writeIndex(["a": second, "b": second], in: folder)
+        // The index places "a" in the second shard, which does not hold it.
+        try writeIndex(["a": second, "b": second, "c": second], in: folder)
         assertCheckpointError(try SafetensorsCheckpoint(modelFolder: folder)) {
-            $0 == .tensorNotInIndex(name: "a", shard: self.first)
+            $0 == .tensorMissingFromShard(name: "a", shard: self.second)
         }
-        try writeIndex(["a": first, "b": second, "z": second], in: folder)
+        // The second shard holds "c", which the index does not list.
+        try writeIndex(["a": first, "b": second], in: folder)
         assertCheckpointError(try SafetensorsCheckpoint(modelFolder: folder)) {
-            $0 == .tensorMissingFromShard(name: "z", shard: self.second)
+            $0 == .tensorNotInIndex(name: "c", shard: self.second)
         }
+        // The index lists "z", which no shard holds.
+        try writeIndex(["a": first, "b": second, "c": second, "z": first], in: folder)
+        assertCheckpointError(try SafetensorsCheckpoint(modelFolder: folder)) {
+            $0 == .tensorMissingFromShard(name: "z", shard: self.first)
+        }
+        // A shard the index never names is not opened.
         try writeIndex(["a": first], in: folder)
-        // Only the first shard is opened, and it agrees with the index.
         XCTAssertEqual(Set(try SafetensorsCheckpoint(modelFolder: folder).descriptors.keys), ["a"])
     }
 
