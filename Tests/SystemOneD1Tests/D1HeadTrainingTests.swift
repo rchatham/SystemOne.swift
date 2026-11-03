@@ -88,9 +88,11 @@ final class D1HeadTrainingTests: XCTestCase {
 
                 let flat = gradient.reshaped(-1)
                 let sampled = flat[MLXArray(expected.indices.map(Int32.init))].asArray(Float.self)
-                // The floor sits below every real head gradient (smallest max |g| ~7e-4) and above
-                // the zero gradient's float32 residue (PyTorch 1.9e-9, MLX exactly 0).
-                let scale = max(abs(flat).max().item(Float.self), 1e-5)
+                // A gradient that is zero by symmetry is "probabilities sum to 1, minus 1", so its
+                // residue depends on the build but stays within a few float32 ulps of 1. This floor
+                // allows 5e-7 (about 4 ulps) and sits below every real head gradient (smallest max
+                // |g| ~7e-4).
+                let scale = max(abs(flat).max().item(Float.self), 5e-4)
                 for (a, e) in zip(sampled, expected.values) {
                     worstValue = max(worstValue, abs(a - e) / scale)
                     XCTAssertEqual(a, e, accuracy: 1e-3 * scale, expected.name)

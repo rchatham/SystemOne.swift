@@ -30,8 +30,8 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   every head weight passed to `valueAndGrad`. `tools/d1_training_capture.py`
   records PyTorch's loss, gradients, and one gradient-descent step in
   `testdata/d1_training_golden_v1.json`; on the GPU, Swift matches all 31
-  head gradients to 1e-5 relative in norm, and the step's loss (3.8168 to
-  3.4239) to 1e-5. See `docs/FEDERATED.md`.
+  head gradients to 3e-5 relative in norm, and the step's loss (3.8168 to
+  3.4239) to 2e-5. See `docs/FEDERATED.md`.
 - `SystemOneMedia`, `RGBImage` (including `init?(cgImage:)`), and `AudioClip`.
 - `ModelProfile`, `VonModelProfile`, and `D1ModelProfile` for model-agnostic
   HTTP admission and service metadata.

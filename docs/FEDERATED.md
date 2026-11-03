@@ -180,12 +180,14 @@ The §5 commercial threshold applies to them as it does to the base model.
    gradients with PyTorch on a golden row. Measure memory and time.
    Head-only step done on the Mac GPU: `D1HeadTraining` and
    `D1HeadTrainingTests` against `tools/d1_training_capture.py` (three
-   triage rows, padded to three options). All 31 head gradients match
-   PyTorch to 8e-6 relative in norm and sampled values to 2e-4 of each
-   tensor's max |g|; the loss goes 3.81682 to 3.42389 after one step at
-   learning rate 1e-3 (PyTorch 3.81683 to 3.42389). The scorer's output bias
-   gradient is zero by softmax shift invariance (MLX exactly 0, PyTorch
-   -1.9e-9). Still to do: memory and time, then the same on an iPhone.
+   triage rows, padded to three options), from a Release build with Xcode's
+   kernels. All 31 head gradients match PyTorch to 3e-5 relative in norm and
+   sampled values to 6e-5 of each tensor's max |g|; the loss goes 3.81681 to
+   3.42388 after one step at learning rate 1e-3 (PyTorch 3.81683 to 3.42389).
+   The scorer's output bias gradient is zero by softmax shift invariance, so
+   each side reports only float32 residue that varies by build (MLX -3e-8 here,
+   PyTorch -1.9e-9); it sets both worst-case figures above. Still to do:
+   memory and time, then the same on an iPhone.
 2. **LoRA in `SystemOneD1`:** optional adapters on trunk and head `Linear`s,
    zero-adapter output identical to today, adapter safetensors I/O.
 3. **On-device trainer:** example store, training loop, harness UI for
