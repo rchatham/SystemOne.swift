@@ -36,6 +36,16 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   prompts match each reference's packed ids, and the heads match the reference
   heads on a tiny encoder (`testdata/encoder_decisions/`,
   `tools/encoder_decisions_fixture.py`).
+- `SystemOneDecoders` (Apache-2.0): `Qwen35Trunk`, the Qwen3.5 text trunk
+  (Gated DeltaNet and gated full attention) returning final-norm hidden states
+  for decision readouts. It loads transformers checkpoints and mlx-lm exports,
+  dense or quantized, under any published prefix. `DecoderAttention` gives
+  causal, bidirectional (d3-style), or per-row visibility plans with explicit
+  positions; `Qwen35Cache` holds a one-row prefix that many rows can read; and
+  `readoutRows(_:)` gathers output-embedding rows without full-vocabulary
+  logits. The gated delta rule runs in chunks as transformers does. Checked
+  against transformers and mlx-lm with `testdata/qwen35_tiny/`
+  (`tools/qwen35_fixture.py`). See [docs/DECODERS.md](docs/DECODERS.md).
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
   `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`.
