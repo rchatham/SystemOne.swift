@@ -84,7 +84,9 @@ extension SafetensorsFile {
             }
         )
     }
+}
 
+extension TensorStore {
     /// Requires exactly the schema's tensor names, with matching dtypes and shapes.
     public func validate(schema: [WeightSpecification]) throws {
         let expectedNames = Set(schema.map(\.name))
@@ -123,12 +125,33 @@ extension SafetensorsFile {
 }
 
 extension SafetensorsTensorView {
-    /// Copies this float32 tensor into an MLX-owned array, so no MLX array ever
-    /// retains a pointer into the read-only safetensors mapping.
+    /// Copies this tensor into an MLX-owned array of its stored dtype, so no
+    /// MLX array ever retains a pointer into the read-only safetensors mapping.
     package func mlxArray() -> MLXArray {
-        precondition(descriptor.dataType == .float32, "Only float32 tensors are copied into MLX")
-        return withUnsafeBytes { bytes in
-            MLXArray(Data(bytes: bytes.baseAddress!, count: bytes.count), descriptor.shape, dtype: .float32)
+        withUnsafeBytes { bytes in
+            let data = bytes.baseAddress.map { Data(bytes: $0, count: bytes.count) } ?? Data()
+            return MLXArray(data, descriptor.shape, dtype: descriptor.dataType.mlxDataType)
+        }
+    }
+
+    /// Copies this tensor into MLX and casts it to `dataType` when that differs
+    /// from the stored dtype.
+    package func mlxArray(_ dataType: DType) -> MLXArray {
+        let array = mlxArray()
+        return array.dtype == dataType ? array : array.asType(dataType)
+    }
+
+    /// The values of a floating-point tensor as float32, decoded on the CPU.
+    package func floatValues() -> [Float] {
+        switch descriptor.dataType {
+        case .float32:
+            return withFloats { Array($0) }
+        case .float16:
+            return withHalfWords { $0.map(Self.float(fromFloat16:)) }
+        case .bfloat16:
+            return withHalfWords { $0.map(Self.float(fromBFloat16:)) }
+        default:
+            preconditionFailure("\(descriptor.dataType.rawValue) tensors have no float values")
         }
     }
 
@@ -142,8 +165,22 @@ extension SafetensorsTensorView {
     ///
     /// Also returns the source's largest magnitude, read in the same pass:
     /// values of `float16OverflowMagnitude` or more become infinity.
+    /// float16 and bfloat16 sources are accepted too: float16 is copied as is,
+    /// and bfloat16 is widened to float32 and rounded like a float32 source.
     package func float16Array() -> (array: MLXArray, maximumMagnitude: Float) {
-        precondition(descriptor.dataType == .float32, "Only float32 tensors are copied into MLX")
+        switch descriptor.dataType {
+        case .float32:
+            break
+        case .float16:
+            return (mlxArray(), maximumMagnitude())
+        case .bfloat16:
+            let values = floatValues()
+            let half = Self.float16Bytes(values)
+            let maximum = values.withUnsafeBufferPointer(Self.maximumMagnitude)
+            return (MLXArray(half, descriptor.shape, dtype: .float16), maximum)
+        default:
+            preconditionFailure("Only floating-point tensors convert to float16")
+        }
         let page = Int(getpagesize())
         var buffer: UnsafeMutableRawPointer?
         let capacity = max(page, (descriptor.elementCount * 2 + page - 1) / page * page)
@@ -155,10 +192,38 @@ extension SafetensorsTensorView {
         return (MLXArray(rawPointer: buffer!, descriptor.shape, dtype: .float16) { free(buffer) }, maximum)
     }
 
-    /// The largest absolute value in this float32 tensor.
+    /// The largest absolute value in this floating-point tensor.
     package func maximumMagnitude() -> Float {
-        precondition(descriptor.dataType == .float32, "Only float32 tensors have a float magnitude")
-        return withFloats(Self.maximumMagnitude)
+        switch descriptor.dataType {
+        case .float32:
+            return withFloats(Self.maximumMagnitude)
+        case .float16, .bfloat16:
+            return floatValues().withUnsafeBufferPointer(Self.maximumMagnitude)
+        default:
+            preconditionFailure("Only floating-point tensors have a float magnitude")
+        }
+    }
+
+    /// The float32 value of an IEEE float16 bit pattern (exact).
+    package static func float(fromFloat16 bits: UInt16) -> Float {
+        let sign: UInt32 = UInt32(bits & 0x8000) << 16
+        let exponent = UInt32((bits >> 10) & 0x1F)
+        let mantissa = UInt32(bits & 0x03FF)
+        switch exponent {
+        case 0:
+            // Zero or subnormal: mantissa × 2^-24.
+            let magnitude = Float(mantissa) * Float(bitPattern: 0x3380_0000)
+            return sign == 0 ? magnitude : -magnitude
+        case 0x1F:
+            return Float(bitPattern: sign | 0x7F80_0000 | (mantissa << 13))
+        default:
+            return Float(bitPattern: sign | ((exponent + 112) << 23) | (mantissa << 13))
+        }
+    }
+
+    /// The float32 value of a bfloat16 bit pattern (exact).
+    package static func float(fromBFloat16 bits: UInt16) -> Float {
+        Float(bitPattern: UInt32(bits) << 16)
     }
 
     /// IEEE float16 bytes for float32 values, rounding to nearest even.
@@ -187,6 +252,19 @@ extension SafetensorsTensorView {
         }
     }
 
+    /// The mapped 16-bit words of a float16 or bfloat16 tensor, copied out so
+    /// misaligned payloads read correctly.
+    private func withHalfWords<Result>(_ body: ([UInt16]) -> Result) -> Result {
+        withUnsafeBytes { bytes in
+            let count = bytes.count / 2
+            let words = [UInt16](unsafeUninitializedCapacity: count) { storage, initialized in
+                if count > 0 { memcpy(storage.baseAddress!, bytes.baseAddress!, count * 2) }
+                initialized = count
+            }
+            return body(words.map { UInt16(littleEndian: $0) })
+        }
+    }
+
     private static func maximumMagnitude(_ values: UnsafeBufferPointer<Float>) -> Float {
         guard let base = values.baseAddress, !values.isEmpty else { return 0 }
         var maximum: Float = 0
@@ -203,5 +281,26 @@ extension SafetensorsTensorView {
                                    rowBytes: values.count * 2)
         let status = vImageConvert_PlanarFtoPlanar16F(&source, &output, vImage_Flags(kvImageNoFlags))
         precondition(status == kvImageNoError, "float16 conversion failed: \(status)")
+    }
+}
+
+extension SafetensorsDataType {
+    /// The MLX dtype that holds this element type unchanged.
+    public var mlxDataType: DType {
+        switch self {
+        case .float64: return .float64
+        case .float32: return .float32
+        case .float16: return .float16
+        case .bfloat16: return .bfloat16
+        case .int64: return .int64
+        case .int32: return .int32
+        case .int16: return .int16
+        case .int8: return .int8
+        case .uint64: return .uint64
+        case .uint32: return .uint32
+        case .uint16: return .uint16
+        case .uint8: return .uint8
+        case .bool: return .bool
+        }
     }
 }

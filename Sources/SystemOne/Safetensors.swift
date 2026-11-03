@@ -1,17 +1,41 @@
 import Darwin
 import Foundation
 
-/// The tensor element types the loader accepts. Models compute in float32;
-/// `I64` appears only for bookkeeping tensors such as BatchNorm counters.
-public enum SafetensorsDataType: String, Sendable {
+/// The tensor element types the loader accepts.
+///
+/// PyTorch checkpoints are float32, float16, or bfloat16, with `I64` for
+/// bookkeeping tensors such as BatchNorm counters. MLX exports add `U32` for
+/// packed quantized weights.
+public enum SafetensorsDataType: String, Sendable, CaseIterable {
+    case float64 = "F64"
     case float32 = "F32"
+    case float16 = "F16"
+    case bfloat16 = "BF16"
     case int64 = "I64"
+    case int32 = "I32"
+    case int16 = "I16"
+    case int8 = "I8"
+    case uint64 = "U64"
+    case uint32 = "U32"
+    case uint16 = "U16"
+    case uint8 = "U8"
+    case bool = "BOOL"
 
     /// Bytes per element.
     public var byteWidth: Int {
         switch self {
-        case .float32: return 4
-        case .int64: return 8
+        case .float64, .int64, .uint64: return 8
+        case .float32, .int32, .uint32: return 4
+        case .float16, .bfloat16, .int16, .uint16: return 2
+        case .int8, .uint8, .bool: return 1
+        }
+    }
+
+    /// Whether the elements are floating point.
+    public var isFloatingPoint: Bool {
+        switch self {
+        case .float64, .float32, .float16, .bfloat16: return true
+        default: return false
         }
     }
 }
@@ -405,7 +429,7 @@ private struct SafetensorsHeader {
         guard let dataType = SafetensorsDataType(rawValue: dataTypeName) else {
             throw SafetensorsError.invalidDescriptor(
                 name: name,
-                reason: "unsupported dtype \(dataTypeName); expected F32 or I64"
+                reason: "unsupported dtype \(dataTypeName)"
             )
         }
 

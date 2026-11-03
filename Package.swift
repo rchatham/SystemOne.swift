@@ -91,7 +91,11 @@ let package = Package(
         ),
         .testTarget(
             name: "SystemOneTests",
-            dependencies: ["SystemOne"],
+            dependencies: [
+                "SystemOne",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+            ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

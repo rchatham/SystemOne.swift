@@ -8,6 +8,17 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Added
 
+- Weight formats for the next model families: safetensors float16, bfloat16,
+  and integer tensors (`SafetensorsDataType`); sharded checkpoints
+  (`SafetensorsCheckpoint`, over a shared `TensorStore` protocol); and MLX
+  affine-quantized weights at 2–8 bits, loaded as `QuantizedLinear` or a
+  packed quantized embedding, with group size and bits read from the stored
+  shapes and checked against `config.json` (`MLXQuantizationConfiguration`).
+  A pure-Swift `AffineQuantization` reference and
+  `testdata/mlx_affine_quantization_v1.json` (`tools/mlx_quantization_fixture.py`,
+  mlx 0.32.4) pin MLX's packing.
+- CI runs MLX checks from the Xcode test bundle (`SYSTEMONE_MLX_TESTS=1`) on
+  tiny fixtures.
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
   `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`.
