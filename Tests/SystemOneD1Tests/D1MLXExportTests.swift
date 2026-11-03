@@ -120,10 +120,14 @@ final class D1MLXExportRuntimeTests: XCTestCase {
         }
     }
 
-    /// Swift's logits for every layout against mlx-vlm's. float32 must agree
-    /// closely; float16 and 8-bit compute differ by rounding (float16 alone
-    /// moves these random-weight logits by up to 9e-3 in mlx-vlm), well below
-    /// the 0.1 that 8-bit quantization itself moves them.
+    /// Swift's logits for every layout against mlx-vlm's. float32 compute must
+    /// agree closely, the 8-bit export included (mlx-vlm's quantized and
+    /// dequantized float32 paths agree exactly). float16 kernels round
+    /// differently: float16 alone moves these random-weight logits by up to
+    /// 9e-3, and float16 quantized matmuls by up to 0.035 (mlx-vlm's own
+    /// quantized and dequantized float16 paths differ by 0.02), so the float16
+    /// 8-bit check is a coarse one, still well below the 0.1 that 8-bit
+    /// quantization itself moves them.
     func testTinyLogitsMatchMLXVLMInEveryLayout() throws {
         let fixture = try JSONDecoder().decode(
             Fixture.self,
@@ -133,11 +137,12 @@ final class D1MLXExportRuntimeTests: XCTestCase {
             D1Row(ids: $0.ids, markers: $0.markers, questionType: D1DecisionHead.QuestionType(rawValue: $0.type)!, prefix: nil)
         }
         let device: Device = ProcessInfo.processInfo.environment["SYSTEMONE_MLX_DEVICE"] == "gpu" ? .gpu : .cpu
-        let cases: [(String, D1Precision, Float)] = [
-            ("pytorch", .float32, 1e-4), ("mlx-fp16", .float16, 1e-2), ("mlx-8bit", .float16, 1e-2),
+        let cases: [(name: String, reference: String, precision: D1Precision, tolerance: Float)] = [
+            ("pytorch", "pytorch", .float32, 1e-4), ("mlx-fp16", "mlx-fp16", .float16, 1e-2),
+            ("mlx-8bit", "mlx-8bit-float32", .float32, 1e-3), ("mlx-8bit", "mlx-8bit", .float16, 5e-2),
         ]
         try Device.withDefaultDevice(device) {
-            for (name, precision, tolerance) in cases {
+            for (name, reference, precision, tolerance) in cases {
                 let folder = D1MLXExportTests.tinyFolder(name)
                 let configuration = try D1Configuration(modelFolder: folder)
                 let model = try D1Model(weights: D1Weights(modelFolder: folder, configuration: configuration, precision: precision))
@@ -145,11 +150,11 @@ final class D1MLXExportRuntimeTests: XCTestCase {
                 eval(logits)
                 let width = logits.dim(1)
                 let flat = logits.asArray(Float.self)
-                let expected = try XCTUnwrap(fixture.logits[name])
+                let expected = try XCTUnwrap(fixture.logits[reference])
                 for (index, row) in rows.enumerated() {
                     let actual = Array(flat[(index * width)..<(index * width + row.markers.count)])
                     let worst = zip(actual, expected[index]).map { abs($0 - $1) }.max() ?? 0
-                    XCTAssertLessThanOrEqual(worst, tolerance, "\(name) row \(index): \(actual) vs \(expected[index])")
+                    XCTAssertLessThanOrEqual(worst, tolerance, "\(reference) row \(index): \(actual) vs \(expected[index])")
                 }
             }
         }
