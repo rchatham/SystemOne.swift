@@ -115,10 +115,29 @@ final class D1Model {
             let joined = concatenated(parts.map { padded($0.1, widths: [0, [0, width - $0.1.dim(1)]]) }, axis: 0)
             return joined.take(MLXArray(inverse), axis: 0)
         }
+        return headLogits(for: rows, text: try trunkText(for: rows, reusingPrefixStates: reusingPrefixStates))
+    }
 
+    /// Raw head logits from trunk text computed once by `trunkText(for:)`,
+    /// optionally with head weights other than the loaded ones.
+    func headLogits(for rows: [D1Row], text: MLXArray, headParameters: [String: MLXArray]? = nil) -> MLXArray {
+        head(
+            text,
+            lengths: rows.map(\.ids.count),
+            questionTypes: rows.map(\.questionType),
+            markers: rows.map(\.markers),
+            parameters: headParameters
+        )
+    }
+
+    /// `[B, T, D]` trunk output over each row's text positions, right-padded:
+    /// everything the head reads. Only rows sharing one media prefix can reuse
+    /// its cached states; any other mix runs each row's prefix with its text.
+    func trunkText(for rows: [D1Row], reusingPrefixStates: Bool = true) throws -> MLXArray {
+        let prefix = rows.first?.prefix
         let textLengths = rows.map(\.ids.count)
         let hidden: MLXArray
-        if rows.first?.prefix != nil, !reusingPrefixStates {
+        if !rows.allSatisfy({ $0.prefix === prefix }) || (prefix != nil && !reusingPrefixStates) {
             hidden = try textHiddenRunningPrefix(rows)
         } else {
             let longestText = textLengths.max() ?? 0
@@ -126,19 +145,14 @@ final class D1Model {
                 padded(trunk.embedding(MLXArray(row.ids.map(Int32.init))),
                        widths: [[0, longestText - row.ids.count], 0])
             })
-            if let prefix = rows.first?.prefix {
+            if let prefix {
                 hidden = trunk(text, lengths: textLengths, after: try prefix.state(using: self))
             } else {
                 hidden = trunk(text, lengths: textLengths, prefixLengths: rows.map { _ in 0 }).output
             }
         }
         precondition(hidden.dim(2) == configuration.text.hiddenSize)
-        return head(
-            hidden,
-            lengths: textLengths,
-            questionTypes: rows.map(\.questionType),
-            markers: rows.map(\.markers)
-        )
+        return hidden
     }
 
     /// `[B, T, D]` text states from running each row's prefix and text together.

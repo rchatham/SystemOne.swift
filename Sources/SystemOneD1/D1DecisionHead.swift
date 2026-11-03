@@ -9,6 +9,10 @@ import MLXNN
 /// `encoder.py` `DecisionHead`: a question-type embedding, two pre-norm
 /// transformer layers over the text positions, and one shared MLP scoring the
 /// hidden state at each option marker.
+///
+/// The forward pass is a function of a named parameter set, so training can
+/// pass the weights in as arguments to `valueAndGrad` and inference uses the
+/// loaded ones.
 final class D1DecisionHead {
     /// `QTYPES` in `prompt.py`.
     enum QuestionType: Int {
@@ -17,51 +21,20 @@ final class D1DecisionHead {
         case noul = 2
     }
 
-    private struct Layer {
-        let inProjection: Linear
-        let outProjection: Linear
-        let norm1Weight: MLXArray, norm1Bias: MLXArray
-        let norm2Weight: MLXArray, norm2Bias: MLXArray
-        let expand: Linear
-        let contract: Linear
-    }
-
     /// PyTorch's `nn.LayerNorm` default.
     private static let normEpsilon: Float = 1e-5
     private static let headDimension = 64
 
-    private let typeEmbedding: MLXArray
-    private let layers: [Layer]
-    private let scorerNormWeight: MLXArray
-    private let scorerNormBias: MLXArray
-    private let scorerDense: Linear
-    private let scorerOutput: Linear
+    /// Every head weight, keyed by its checkpoint name (`head.scorer.1.weight`).
+    let parameters: [String: MLXArray]
+    private let layerCount: Int
 
     init(weights: D1Weights) {
-        typeEmbedding = weights.array("head.type_emb.weight")
-        layers = (0..<weights.configuration.headLayers).map { index in
-            let prefix = "head.head.layers.\(index)"
-            func linear(_ name: String) -> Linear {
-                Linear(weight: weights.array("\(prefix).\(name).weight"), bias: weights.array("\(prefix).\(name).bias"))
-            }
-            return Layer(
-                inProjection: Linear(
-                    weight: weights.array("\(prefix).self_attn.in_proj_weight"),
-                    bias: weights.array("\(prefix).self_attn.in_proj_bias")
-                ),
-                outProjection: linear("self_attn.out_proj"),
-                norm1Weight: weights.array("\(prefix).norm1.weight"),
-                norm1Bias: weights.array("\(prefix).norm1.bias"),
-                norm2Weight: weights.array("\(prefix).norm2.weight"),
-                norm2Bias: weights.array("\(prefix).norm2.bias"),
-                expand: linear("linear1"),
-                contract: linear("linear2")
-            )
-        }
-        scorerNormWeight = weights.array("head.scorer.0.weight")
-        scorerNormBias = weights.array("head.scorer.0.bias")
-        scorerDense = Linear(weight: weights.array("head.scorer.1.weight"), bias: weights.array("head.scorer.1.bias"))
-        scorerOutput = Linear(weight: weights.array("head.scorer.3.weight"), bias: weights.array("head.scorer.3.bias"))
+        layerCount = weights.configuration.headLayers
+        parameters = Dictionary(uniqueKeysWithValues: D1Weights.schema(for: weights.configuration)
+            .map(\.name)
+            .filter { $0.hasPrefix("head.") }
+            .map { ($0, weights.array($0)) })
     }
 
     /// Scores marker positions of right-padded text rows.
@@ -71,20 +44,31 @@ final class D1DecisionHead {
     ///   - lengths: real text positions per row.
     ///   - questionTypes: one type per row.
     ///   - markers: marker positions per row, relative to the row's text.
+    ///   - parameters: head weights to use in place of the loaded ones, by checkpoint name.
     /// - Returns: `[B, K]` raw logits; positions past a row's marker count are unspecified.
     func callAsFunction(
         _ text: MLXArray,
         lengths: [Int],
         questionTypes: [QuestionType],
-        markers: [[Int]]
+        markers: [[Int]],
+        parameters: [String: MLXArray]? = nil
     ) -> MLXArray {
+        let p = parameters ?? self.parameters
+        // `nn.Linear`, computed as MLXNN's `Linear` does.
+        func linear(_ x: MLXArray, _ name: String) -> MLXArray {
+            addMM(p["\(name).bias"]!, x, p["\(name).weight"]!.T)
+        }
+        func layerNorm(_ x: MLXArray, _ name: String) -> MLXArray {
+            MLXFast.layerNorm(x, weight: p["\(name).weight"]!, bias: p["\(name).bias"]!, eps: Self.normEpsilon)
+        }
+
         let batch = text.dim(0)
         let length = text.dim(1)
         let width = text.dim(2)
         let heads = width / Self.headDimension
 
         let types = MLXArray(questionTypes.map { Int32($0.rawValue) })
-        var hidden = text + typeEmbedding[types].expandedDimensions(axis: 1)
+        var hidden = text + p["head.type_emb.weight"]![types].expandedDimensions(axis: 1)
 
         var mask: MLXArray?
         if lengths.contains(where: { $0 != length }) {
@@ -94,10 +78,10 @@ final class D1DecisionHead {
                 .reshaped(batch, 1, 1, length)
         }
 
-        for layer in layers {
-            let normalized = MLXFast.layerNorm(hidden, weight: layer.norm1Weight, bias: layer.norm1Bias,
-                                               eps: Self.normEpsilon)
-            let qkv = layer.inProjection(normalized)
+        for index in 0..<layerCount {
+            let layer = "head.head.layers.\(index)"
+            let qkv = addMM(p["\(layer).self_attn.in_proj_bias"]!, layerNorm(hidden, "\(layer).norm1"),
+                            p["\(layer).self_attn.in_proj_weight"]!.T)
                 .reshaped(batch, length, 3, heads, Self.headDimension)
                 .transposed(2, 0, 3, 1, 4)
             let attended = MLXFast.scaledDotProductAttention(
@@ -105,10 +89,10 @@ final class D1DecisionHead {
                 scale: 1 / Float(Self.headDimension).squareRoot(),
                 mask: mask
             )
-            hidden = hidden + layer.outProjection(attended.transposed(0, 2, 1, 3).reshaped(batch, length, width))
-            let feedForwardInput = MLXFast.layerNorm(hidden, weight: layer.norm2Weight, bias: layer.norm2Bias,
-                                                     eps: Self.normEpsilon)
-            hidden = hidden + layer.contract(relu(layer.expand(feedForwardInput)))
+            hidden = hidden + linear(attended.transposed(0, 2, 1, 3).reshaped(batch, length, width),
+                                     "\(layer).self_attn.out_proj")
+            let feedForwardInput = layerNorm(hidden, "\(layer).norm2")
+            hidden = hidden + linear(relu(linear(feedForwardInput, "\(layer).linear1")), "\(layer).linear2")
         }
 
         let optionCount = markers.map(\.count).max() ?? 0
@@ -116,9 +100,7 @@ final class D1DecisionHead {
             (0..<optionCount).map { Int32(row * length + (positions.indices.contains($0) ? positions[$0] : 0)) }
         }
         let gathered = hidden.reshaped(batch * length, width)[MLXArray(flatPositions)]
-        var scored = MLXFast.layerNorm(gathered, weight: scorerNormWeight, bias: scorerNormBias,
-                                       eps: Self.normEpsilon)
-        scored = scorerOutput(gelu(scorerDense(scored)))
+        let scored = linear(gelu(linear(layerNorm(gathered, "head.scorer.0"), "head.scorer.1")), "head.scorer.3")
         return scored.reshaped(batch, optionCount)
     }
 }

@@ -140,6 +140,15 @@ func checkPrefixReuse(
                        "\(label) mixed text-only row", file: file, line: line)
     }
 
+    // trunkText, which training calls directly, runs a mixed batch whole instead of misreading one prefix.
+    let mixedRows = zip(rows, textOnly).flatMap { [$0, $1] }
+    let whole = model.headLogits(for: mixedRows, text: try model.trunkText(for: mixedRows))
+    for (index, row) in mixedRows.enumerated() {
+        let difference = abs(whole[index, 0..<row.markers.count] - mixed[index, 0..<row.markers.count])
+        XCTAssertLessThan(difference.max().item(Float.self), 1e-3, "\(label) mixed row through trunkText",
+                          file: file, line: line)
+    }
+
     var worstAgainstFull: Float = 0
     var worstAgainstPython: Float = 0
     for (index, row) in fixtureRows.enumerated() {
