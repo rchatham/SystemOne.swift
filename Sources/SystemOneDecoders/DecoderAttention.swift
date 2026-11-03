@@ -116,6 +116,7 @@ public enum DecoderError: Error, Equatable, Sendable {
     case invalidTokenID(row: Int, column: Int, value: Int)
     case sequenceTooLong(maximum: Int, actual: Int)
     case prefixBatch(Int)
+    case featureCount(row: Int, placeholders: Int, features: Int)
 }
 
 extension DecoderError: LocalizedError {
@@ -137,6 +138,8 @@ extension DecoderError: LocalizedError {
             return "Decoder input has positions up to \(actual); the maximum is \(maximum)."
         case .prefixBatch(let rows):
             return "A cached prefix holds one row; it was built from \(rows)."
+        case .featureCount(let row, let placeholders, let features):
+            return "Decoder row \(row) has \(placeholders) placeholder tokens for \(features) feature rows."
         }
     }
 }

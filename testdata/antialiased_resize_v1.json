@@ -1,0 +1,352 @@
+{
+ "format": "antialiased_resize",
+ "version": 1,
+ "metadata": {
+  "torch": "2.15.0",
+  "torchvision": "0.29.2",
+  "pillow": "13.0.0"
+ },
+ "cases": [
+  {
+   "input": [
+    37,
+    23,
+    0
+   ],
+   "output": [
+    64,
+    41
+   ],
+   "source": {
+    "sha256": "d2a0c73a1a4d8a8c87b446c305b2cc17ff6e4ca6bceeb6f271cbd6a479230cd6",
+    "sum": 324513
+   },
+   "aten_cubic": {
+    "sha256": "3a36ece86d32e24b325ea12fdcdbad291e7cb3be2d3128053077d4be31bc116c",
+    "sum": 1000644
+   },
+   "aten_triangle": {
+    "sha256": "42e092561410be97603589a0e1cd5f466f0a4df075590d3468e9bec229d74a05",
+    "sum": 1000529
+   },
+   "pillow_cubic": {
+    "sha256": "a56f2f874c0320dc61b4016f57084b67fbbdbb3303f78f878478585c9b44f2a7",
+    "sum": 1000656
+   },
+   "pillow_triangle": {
+    "sha256": "42e092561410be97603589a0e1cd5f466f0a4df075590d3468e9bec229d74a05",
+    "sum": 1000529
+   }
+  },
+  {
+   "input": [
+    300,
+    200,
+    1
+   ],
+   "output": [
+    320,
+    224
+   ],
+   "source": {
+    "sha256": "d46847f7add1272e103b49bf69a97ec0a948613d9739bc0440f71c89fba204f7",
+    "sum": 22962925
+   },
+   "aten_cubic": {
+    "sha256": "971e6020621ccad5cce184be5c8fc38e3060d3e27a3117313bf28d17b54d1492",
+    "sum": 27432830
+   },
+   "aten_triangle": {
+    "sha256": "34bdad655a60c03e6f0afde316fbf241f241c5d2513cf3f1a60e987db980e104",
+    "sum": 27438111
+   },
+   "pillow_cubic": {
+    "sha256": "d722ccbff060b8b69cb5caf06eac18b158a890a793182cbd42c2c19b0b35cb8d",
+    "sum": 27432594
+   },
+   "pillow_triangle": {
+    "sha256": "4379b057bf2dc286237ace4d3bec1d3e5a82de36142dfb2f9b3ce0cbef6f633c",
+    "sum": 27438051
+   }
+  },
+  {
+   "input": [
+    700,
+    500,
+    3
+   ],
+   "output": [
+    576,
+    416
+   ],
+   "source": {
+    "sha256": "2c63388c2225dfc24b3f499c3a0cb8c2a1bae22a1e27c6a74e6349ebc147adf7",
+    "sum": 133895114
+   },
+   "aten_cubic": {
+    "sha256": "6ddb3410a22d1cf54d9fc10a446a8b02fd1edfc0c6a6e592118f4196e0dc9883",
+    "sum": 91667141
+   },
+   "aten_triangle": {
+    "sha256": "7310dcd05ae3c2e6b0b99e92a5672047a9e4953f50983976fd3c8641abda1bc7",
+    "sum": 91664945
+   },
+   "pillow_cubic": {
+    "sha256": "cc737e98f88f06f319ae6d8878e2d20ceaf4e39f67b71fc64237c6bfaecc3b80",
+    "sum": 91667412
+   },
+   "pillow_triangle": {
+    "sha256": "75859ea0978e4b177575b94009a9c4d1af5be779cfdf09f79a5ad396e6e8bdcc",
+    "sum": 91665169
+   }
+  },
+  {
+   "input": [
+    61,
+    47,
+    5
+   ],
+   "output": [
+    17,
+    13
+   ],
+   "source": {
+    "sha256": "953cd325e239b90df7dbad48ab25a7aa1e0a4b916c8e3f2a34fbdb25dca05f48",
+    "sum": 1097719
+   },
+   "aten_cubic": {
+    "sha256": "3dbc20b2b8b93e22f76b685f00cf5b11a2c1839f148203ab9632b862361544a6",
+    "sum": 84619
+   },
+   "aten_triangle": {
+    "sha256": "22bd97ea9b026c5addba85d0d465817e10090b07d60ec67b7831d7185211b8a3",
+    "sum": 84607
+   },
+   "pillow_cubic": {
+    "sha256": "39789d1f11259505c3ef06280ed71ca637ccacc6d1524c409ebe6fc5421c7af1",
+    "sum": 84618
+   },
+   "pillow_triangle": {
+    "sha256": "0d3bc5d808aed5ff02004e4c3a33c2845c9145cf5299eee97b240a7f6256e4ff",
+    "sum": 84604
+   }
+  },
+  {
+   "input": [
+    128,
+    96,
+    7
+   ],
+   "output": [
+    512,
+    512
+   ],
+   "source": {
+    "sha256": "274054691cd152f8eebdcf39a7e23f62a33e21305f775bf843f41d18f9e630c9",
+    "sum": 4702144
+   },
+   "aten_cubic": {
+    "sha256": "596a4e3de372e19aa6c4213c90b96fe760ed5fb33a762be0a984ce99aed0bc95",
+    "sum": 100312806
+   },
+   "aten_triangle": {
+    "sha256": "e19fef03c33c2ce957418a872e21a086ddf5ada331bcae81d8913d812a48094c",
+    "sum": 100372093
+   },
+   "pillow_cubic": {
+    "sha256": "6dbd84a9c1352aba9c81a2551cbf5c6e719b6b3796f2aaa031de3f6718a2f864",
+    "sum": 100312739
+   },
+   "pillow_triangle": {
+    "sha256": "e19fef03c33c2ce957418a872e21a086ddf5ada331bcae81d8913d812a48094c",
+    "sum": 100372093
+   }
+  },
+  {
+   "input": [
+    40,
+    30,
+    9
+   ],
+   "output": [
+    41,
+    30
+   ],
+   "source": {
+    "sha256": "56ab8ed907cfd232d669960bb6c2c4c58e4cddb7f63f2dc9ae88a856b468022d",
+    "sum": 461525
+   },
+   "aten_cubic": {
+    "sha256": "30c207018ce4d60a6eecbbc9bb48abc37448602f846ec0b7e49ba4b815c200bf",
+    "sum": 473077
+   },
+   "aten_triangle": {
+    "sha256": "4beab5d0e14bc2703d2bac37619ce898e7f9879bd82549022725fedced5e2fc9",
+    "sum": 473057
+   },
+   "pillow_cubic": {
+    "sha256": "a294e163bec72ad3100d9c829b2346836bbb46ed8cdaa716d7ffd134733e630b",
+    "sum": 473071
+   },
+   "pillow_triangle": {
+    "sha256": "6779b3263f85400e137793b986aef61e8d08351f3fa42d662f8a7fe7219d3480",
+    "sum": 473054
+   }
+  },
+  {
+   "input": [
+    33,
+    40,
+    11
+   ],
+   "output": [
+    33,
+    71
+   ],
+   "source": {
+    "sha256": "9ce43e24018b3a3872236881c827c1204bde3af79d75fe1cda44c4caca0e8aa7",
+    "sum": 503140
+   },
+   "aten_cubic": {
+    "sha256": "3fed988672280353d3e914f03146a87d5ffdecd8c45616ec5af7de7b832bc4a7",
+    "sum": 893048
+   },
+   "aten_triangle": {
+    "sha256": "03d66b5ae10b57e4513b3b62bc51aad9b8fe58b1dcd351af5627a8f051342100",
+    "sum": 893050
+   },
+   "pillow_cubic": {
+    "sha256": "46662fba80b4ea42b44d84e7dd252fb6d5007cecd9c7c9146fcd2a41341222aa",
+    "sum": 893040
+   },
+   "pillow_triangle": {
+    "sha256": "37771e0711ab7025fc711afafc1ab5082300fa9b9e6666d3632ff824efeca9d5",
+    "sum": 893049
+   }
+  },
+  {
+   "input": [
+    17,
+    51,
+    13
+   ],
+   "output": [
+    77,
+    10
+   ],
+   "source": {
+    "sha256": "9e690e354ac43bb0942faceada43ef6c4778d3b552db5095064814d57eed4d65",
+    "sum": 331463
+   },
+   "aten_cubic": {
+    "sha256": "992bfc6e9d0a1451f20cba6fc9ff7d657c6210c66fdf2b85f86ade3b4b538288",
+    "sum": 294610
+   },
+   "aten_triangle": {
+    "sha256": "b6a3cab0c1db02d36275c963e27b7ebe924021051a50fab7e9f2f852659ddc16",
+    "sum": 294654
+   },
+   "pillow_cubic": {
+    "sha256": "76242c2c3abef7aaf496a97b21e3697ac3fca053609b9dc12f88f393166bde9a",
+    "sum": 294634
+   },
+   "pillow_triangle": {
+    "sha256": "388173944ed63a36fd3740069b9a7472be69c1324ae54102c0c2d55d4417ba5b",
+    "sum": 294649
+   }
+  },
+  {
+   "input": [
+    79,
+    57,
+    15
+   ],
+   "output": [
+    77,
+    32
+   ],
+   "source": {
+    "sha256": "42a0a7f1eb5e488e2ad0642b3d923dda8452f64cec1714ae2bde438a8dbe7e9c",
+    "sum": 1724201
+   },
+   "aten_cubic": {
+    "sha256": "2b8293dba0c88680122d49d91d6157493f93ae4cf0472eb16ac593388a78faa5",
+    "sum": 943473
+   },
+   "aten_triangle": {
+    "sha256": "7b05fc88fa5469980a35019ec3c4041cf6d32e551014b2c2f9815c405542c6de",
+    "sum": 943447
+   },
+   "pillow_cubic": {
+    "sha256": "c6b10153b6d7ccd2117afd8f893ad815f4c623b553ec7aa369e148c8137de69d",
+    "sum": 943433
+   },
+   "pillow_triangle": {
+    "sha256": "16e27279006c4d548a761dfb98d7f6e50d7d31b4505990bbca56eae4a0375efd",
+    "sum": 943501
+   }
+  },
+  {
+   "input": [
+    66,
+    85,
+    17
+   ],
+   "output": [
+    16,
+    10
+   ],
+   "source": {
+    "sha256": "62a2b2b20eb35e8afe0f5b86c017d555555c50b624a9f293f2724477ed80dc3f",
+    "sum": 2145689
+   },
+   "aten_cubic": {
+    "sha256": "980aec119ef80dfe4d0fd440502fa25ad92fac2a6ab9e795c0b5e5edb763bf1a",
+    "sum": 61255
+   },
+   "aten_triangle": {
+    "sha256": "56311393d654aea32602fba66faee18999cda55645368fb4d3fe7c3708a60df9",
+    "sum": 61233
+   },
+   "pillow_cubic": {
+    "sha256": "9ff608a3eb6a48b2e2ebd3797606960d6b4143164e00f2b8bbb8998d4e2b7e92",
+    "sum": 61252
+   },
+   "pillow_triangle": {
+    "sha256": "021ec9350fd468bda94b1ce9f04b45ca522495af7fe83808f9d4e4a227db33a0",
+    "sum": 61231
+   }
+  },
+  {
+   "input": [
+    90,
+    20,
+    19
+   ],
+   "output": [
+    12,
+    19
+   ],
+   "source": {
+    "sha256": "ffbac3d24cf8a5251f42876757a13023cdef4b8017df85242423dab0cc856a47",
+    "sum": 688811
+   },
+   "aten_cubic": {
+    "sha256": "28fbf236b6c1522db3b61408051661860cd8a3b9a2042f61462074aaeac3f122",
+    "sum": 87224
+   },
+   "aten_triangle": {
+    "sha256": "3dcdc1381b01e4939695b772032271cba2b65690765ba655c20fc39712a1f21d",
+    "sum": 87230
+   },
+   "pillow_cubic": {
+    "sha256": "7d4fd9ceb0bd63ed781f2e6345cbc0b14086f89bdc6ad40eb90cd27073eeadd2",
+    "sum": 87222
+   },
+   "pillow_triangle": {
+    "sha256": "4f5f67a938bed2910e7c6b8c96fd4b73e3348c4ff9f9adb4f548b4bbe7be2eb5",
+    "sum": 87228
+   }
+  }
+ ]
+}
