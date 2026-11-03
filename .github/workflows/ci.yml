@@ -150,7 +150,8 @@ jobs:
             -scheme SystemOne-Package \
             -destination 'platform=macOS,arch=arm64' \
             -configuration Release \
-            -derivedDataPath .build/xcode
+            -derivedDataPath .build/xcode \
+            ENABLE_TESTABILITY=YES
 
       - name: Weight parity (GPU)
         env:
