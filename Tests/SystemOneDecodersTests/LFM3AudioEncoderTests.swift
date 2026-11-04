@@ -50,11 +50,16 @@ private struct LFM3AudioFixture: Decodable {
     /// The fixture's 16-bit clip: a ramp in five loudness steps plus an LCG's noise.
     static func clip(_ source: [Int]) -> AudioClip {
         let (rate, count, salt) = (source[0], source[1], source[2])
-        var state = salt
-        let samples = (0..<count).map { index -> Int16 in
+        var state: Int = salt
+        var samples: [Int16] = []
+        samples.reserveCapacity(count)
+        for index in 0..<count {
             state = (state * 1_103_515_245 + 12_345) % 2_147_483_648
-            let tone = (index * (37 + salt) % 200) * ((index / 800) % 5 + 1)
-            return Int16(tone * 24 - 12_000 + (state >> 16) % 8_192 - 4_096)
+            let ramp: Int = (index * (37 + salt)) % 200
+            let loudness: Int = (index / 800) % 5 + 1
+            let noise: Int = (state >> 16) % 8_192 - 4_096
+            let value: Int = ramp * loudness * 24 - 12_000 + noise
+            samples.append(Int16(value))
         }
         return AudioClip(pcm16: samples, sampleRate: rate)
     }
