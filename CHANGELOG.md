@@ -8,6 +8,15 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Added
 
+- No state: `SystemOneState.media` (d1's `state=None`) makes the request's
+  media the whole state, so a d1-Omni-2B spoken state is a clip alone.
+  - d1-2B, d1-Omni-2B and d1-3B prompts write no state block and no
+    `QUESTION:` line; set rows open further questions with nothing.
+  - d1-omni-600M reads it as an empty state (`{}` with audio, as trained),
+    and text-only backends as an empty state.
+  - Its `Codable` form is `"state": null`. The HTTP server still reads a
+    `null` state as the text `None`, as the Python von server does.
+  - Exhaustive `switch`es over `SystemOneState` need the new case.
 - d1-Omni-2B spoken questions: `QuestionEntry.spoken` attaches a clip that
   takes the place of a question's instructions.
   - `D1SetBackend` writes the clip's `<|audio|>` markup where the

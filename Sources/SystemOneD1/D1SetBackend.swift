@@ -159,8 +159,16 @@ public enum D1SetPrompt {
     /// The row's head: BOS, the user turn, the pictures' markup (`images`, not
     /// escaped), the state, and the first `QUESTION:`.
     public static func prefix(state: SystemOneState, configuration: D1SetConfiguration, images: String = "") -> String {
-        configuration.bos + "<|im_start|>user\n" + images
-            + plain(D1ChatPrompt.stateBlock(state), specialTokens: configuration.specialTokens) + "\n" + header
+        let head = configuration.bos + "<|im_start|>user\n" + images
+        // No state (`state=None`, a spoken state): the questions follow the media directly.
+        guard state != .media else { return head }
+        return head + plain(D1ChatPrompt.stateBlock(state), specialTokens: configuration.specialTokens) + "\n" + header
+    }
+
+    /// What opens each further question in a set row (`question_header`):
+    /// `QUESTION:\n`, or nothing after no state.
+    public static func questionHeader(state: SystemOneState) -> String {
+        state == .media ? "" : header
     }
 
     /// The question and the assistant header up to the answer slot. A spoken
@@ -397,7 +405,7 @@ public final class D1SetBackend: DecisionBackend {
             var questions = Array(repeating: -1, count: stateLength) + Array(repeating: 1, count: ids.count - stateLength)
             var ends = [ids.count - 1]
             for (offset, member) in members.enumerated().dropFirst() {
-                let own = tokenizer.encode(D1SetPrompt.header + suffixes[member])
+                let own = tokenizer.encode(D1SetPrompt.questionHeader(state: request.state) + suffixes[member])
                 ids += own
                 questions += Array(repeating: offset + 1, count: own.count)
                 ends.append(ids.count - 1)

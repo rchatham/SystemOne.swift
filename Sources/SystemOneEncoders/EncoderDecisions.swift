@@ -40,9 +40,11 @@ public enum EncoderText {
     }
 
     /// `json.dumps(state, ensure_ascii=False)` for fields, `", "` and `": "`
-    /// separators; a text state passes through.
+    /// separators; a text state passes through; no state is empty text.
     public static func pythonJSON(_ state: SystemOneState) -> String {
         switch state {
+        case .media:
+            return ""
         case .text(let text):
             return text
         case .fields(let fields):
@@ -54,6 +56,8 @@ public enum EncoderText {
     /// The same with compact `","` and `":"` separators.
     public static func compactJSON(_ state: SystemOneState) -> String {
         switch state {
+        case .media:
+            return ""
         case .text(let text):
             return text
         case .fields(let fields):

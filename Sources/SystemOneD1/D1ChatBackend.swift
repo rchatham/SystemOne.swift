@@ -32,7 +32,9 @@ public enum D1ChatPrompt {
     /// The text before the questions: the user turn's head, the pictures'
     /// markup (`images`), and the state.
     public static func prefix(state: SystemOneState, images: String = "") -> String {
-        "<|im_start|>user\n" + images + stateBlock(state) + "\nQUESTION:\n"
+        // No state (`state=None`): the question follows the pictures directly.
+        guard state != .media else { return "<|im_start|>user\n" + images }
+        return "<|im_start|>user\n" + images + stateBlock(state) + "\nQUESTION:\n"
     }
 
     /// `cap_pixels`: a picture over `limit` pixels downscaled with Pillow's
@@ -49,9 +51,12 @@ public enum D1ChatPrompt {
         ))
     }
 
-    /// A text state as is; fields as `json.dumps(…, indent=2, ensure_ascii=False)`.
+    /// A text state as is; fields as `json.dumps(…, indent=2, ensure_ascii=False)`;
+    /// no state writes no block.
     static func stateBlock(_ state: SystemOneState) -> String {
         switch state {
+        case .media:
+            return ""
         case .text(let text):
             return text + "\n\n"
         case .fields(let fields):
