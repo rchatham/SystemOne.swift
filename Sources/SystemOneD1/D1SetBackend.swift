@@ -102,12 +102,16 @@ public struct D1SetConfiguration: Equatable, Sendable {
 
 public enum D1SetError: Error, Equatable, Sendable {
     case invalidConfiguration(String)
+    /// The prompt's video tokens do not match its video's features.
+    case videoPlaceholders(expected: Int, found: Int)
 }
 
 extension D1SetError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidConfiguration(let reason): return "The d1-2B config is invalid: \(reason)."
+        case .videoPlaceholders(let expected, let found):
+            return "The prompt holds \(found) video tokens where its video fills \(expected); text cannot contain the video token."
         }
     }
 }
@@ -255,6 +259,8 @@ public struct D1SetRow: PlannedRow, Equatable, Sendable {
     /// The clips of the row's spoken questions, in question order; their
     /// features fill the `<|audio|>` tokens after the state's.
     public let voices: [AudioClip]
+    /// The video whose sampled frames' features fill the state's `<|video|>` tokens.
+    public let video: VideoClip?
 
     public var sequenceLength: Int { ids.count }
     public var logitCount: Int { groups.reduce(0) { $0 + $1.count } }
@@ -284,7 +290,10 @@ public struct D1SetRow: PlannedRow, Equatable, Sendable {
 /// LFM3-Omni's audio encoder; its features fill the `<|audio|>` tokens.
 /// A spoken question (`QuestionEntry.spoken`) has its clip's markup where its
 /// instructions would be, and its features fill those `<|audio|>` tokens.
-/// Video, a spoken state with no text, and the typed questions (multiple
+/// A state with no text (`SystemOneState.media`) writes no state block. A
+/// video (`SystemOneMedia.video`) is sampled at 2 frames a second, its frame
+/// pairs encoded by LFM3-VL's tower, and written as each pair's time and
+/// `<|video|>` tokens. A video's soundtrack and the typed questions (multiple
 /// choice, extraction, estimates, boxes) are not supported yet.
 public final class D1SetBackend: DecisionBackend {
     public let modelID: String
@@ -305,6 +314,7 @@ public final class D1SetBackend: DecisionBackend {
     private enum Media: Equatable {
         case images([RGBImage])
         case audio(AudioClip)
+        case video(VideoClip)
     }
 
     public convenience init(modelFolder: URL, modelID: String = "d1-2B", dataType: DType = .bfloat16) throws {
@@ -340,12 +350,23 @@ public final class D1SetBackend: DecisionBackend {
         self.audio = audio
     }
 
+    /// How LFM3-VL's video processor reads `clip` (all frames one size).
+    static func layout(of clip: VideoClip, configuration: LFM3VLVisionConfiguration) throws -> LFM3VLVideoLayout {
+        guard let first = clip.frames.first, clip.frames.allSatisfy({ $0.width == first.width && $0.height == first.height }) else {
+            throw LFM3VLVideoError.frames
+        }
+        return try LFM3VLVision.videoLayout(
+            total: clip.frames.count, width: first.width, height: first.height, fps: clip.fps, configuration: configuration
+        )
+    }
+
     /// A checkpoint with an audio encoder (d1-Omni-2B) hears spoken questions.
     public var hearsSpokenQuestions: Bool { audioConfiguration != nil }
 
     public func plan(_ request: SystemOneRequest, media: SystemOneMedia?) throws -> DecisionPlan<D1SetRow> {
         var images: [RGBImage] = []
         var clip: AudioClip?
+        var video: VideoClip?
         var markup = ""
         var placeholders = 0
         switch media {
@@ -365,6 +386,14 @@ public final class D1SetBackend: DecisionBackend {
             placeholders = try LFM3AudioEncoder.featureCount(of: value, configuration: settings)
             markup = LFM3AudioEncoder.markup(featureCount: placeholders)
             clip = value
+        case .video(let value)?:
+            guard let settings = visionConfiguration, settings.video != nil else {
+                throw SystemOneEngineError.unsupportedMedia(model: modelID)
+            }
+            let layout = try Self.layout(of: value, configuration: settings)
+            placeholders = layout.featureCount
+            markup = LFM3VLVision.videoMarkup(layout)
+            video = value
         }
         let stateAudio = placeholders
         var suffixes: [String] = []
@@ -417,6 +446,12 @@ public final class D1SetBackend: DecisionBackend {
                     throw D1ChatError.imagePlaceholders(expected: placeholders, found: found)
                 }
             }
+            if let token = visionConfiguration?.video?.tokenID, video != nil {
+                let found = ids.filter { $0 == token }.count
+                guard found == placeholders else {
+                    throw D1SetError.videoPlaceholders(expected: placeholders, found: found)
+                }
+            }
             // The state's clip, then each spoken question's, in row order.
             let heard = (clip == nil ? 0 : stateAudio) + members.reduce(0) { $0 + voiceCounts[$1] }
             if let token = audioConfiguration?.audioTokenID, heard > 0 {
@@ -443,7 +478,7 @@ public final class D1SetBackend: DecisionBackend {
             rows.append(D1SetRow(
                 ids: ids, stateLength: stateLength, questions: questions, ends: ends,
                 groups: members.map { readouts[$0] }, images: images, audio: clip,
-                voices: members.compactMap { request.questions[$0].spoken }
+                voices: members.compactMap { request.questions[$0].spoken }, video: video
             ))
         }
         return DecisionPlan(rows: rows, decisions: decisions, usage: Usage(inputTokens: rows.reduce(0) { $0 + $1.ids.count }))
@@ -485,8 +520,11 @@ public final class D1SetBackend: DecisionBackend {
     /// Each row's media features, every picture set or clip encoded once;
     /// `nil` when no row has media.
     private func mediaFeatures(_ rows: [D1SetRow]) throws -> DecoderFeatures? {
-        guard rows.contains(where: { !$0.images.isEmpty || $0.audio != nil || !$0.voices.isEmpty }) else { return nil }
+        guard rows.contains(where: { !$0.images.isEmpty || $0.audio != nil || !$0.voices.isEmpty || $0.video != nil }) else {
+            return nil
+        }
         let imageToken = visionConfiguration?.imageTokenID
+        let videoToken = visionConfiguration?.video?.tokenID
         let audioToken = audioConfiguration?.audioTokenID
         var encoded: [(media: Media, features: MLXArray)] = []
         func features(_ media: Media, cached: Bool) throws -> MLXArray {
@@ -501,6 +539,10 @@ public final class D1SetBackend: DecisionBackend {
                 guard let imageToken else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
                 filled[imageToken] = try features(.images(row.images), cached: true)
             }
+            if let video = row.video {
+                guard let videoToken else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+                filled[videoToken] = try features(.video(video), cached: true)
+            }
             // The state's clip, then each spoken question's: the order their `<|audio|>` tokens run.
             var heard = try row.audio.map { [try features(.audio($0), cached: true)] } ?? []
             heard += try row.voices.map { try features(.audio($0), cached: false) }
@@ -510,7 +552,7 @@ public final class D1SetBackend: DecisionBackend {
             }
             return filled
         }
-        return DecoderFeatures(tokens: [imageToken, audioToken].compactMap { $0 }, rows: placed)
+        return DecoderFeatures(tokens: [imageToken, videoToken, audioToken].compactMap { $0 }, rows: placed)
     }
 
     /// `media`'s features (pictures one after another). A request's state
@@ -529,6 +571,10 @@ public final class D1SetBackend: DecisionBackend {
         case .audio(let clip):
             guard let audio else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
             value = try audio(clip)
+        case .video(let clip):
+            guard let vision else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+            let layout = try Self.layout(of: clip, configuration: vision.configuration)
+            value = try vision(video: layout.indices.map { clip.frames[$0] }, layout: layout)
         }
         if cached { featureCache = (media: media, features: value) }
         return value

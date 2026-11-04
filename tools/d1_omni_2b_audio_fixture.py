@@ -26,6 +26,10 @@ trunk and vision tower are testdata/d1_2b_vision_tiny's.
 whose state is None (a spoken state, a picture alone, or nothing) writes no state
 block and no `QUESTION:` header, as `prefix_text` and `question_header` do.
 
+Videos run through the vendored `video_processing_lfm3_vl.py` (`sample_frames`,
+`smart_resize`, `patchify`, transformers' torchvision resize) at a tiny pixel budget, with
+`processing_lfm3_omni.py`'s timestamps and markup; mlx-vlm's tower reads each pair of frames.
+
 A spoken question's instructions are its clip: `suffix_layout` writes `media.SPOKEN`
 in their place, `Reader.place` swaps in the clip's markup, and the engine fills each
 row's `<|audio|>` tokens with the state's clip, then the row's spoken questions'.
@@ -69,7 +73,8 @@ from mlx_vlm.models.lfm3_audio import audio as mlx_audio
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from d1_2b_fixture import ADDED, CALIBRATION, CODES, SPECIAL, WORDS  # noqa: E402
 from d1_2b_vision_fixture import PROCESSOR as VISION_PROCESSOR  # noqa: E402
-from d1_2b_vision_fixture import VISION, VISION_TOKENS, cap_pixels, process  # noqa: E402
+from d1_2b_vision_fixture import VISION, VISION_TOKENS, Backend, cap_pixels, process, sha  # noqa: E402
+from transformers.image_utils import PILImageResampling, SizeDict  # noqa: E402
 from resize_fixture import synthetic  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -167,8 +172,34 @@ REQUESTS = [
     (None, None, None, [
         ("wet", {"type": "noul", "instructions": "Is water wet?"}),
     ]),
+    # Videos: an odd frame count (its last frame repeated), a clip over the budget, and an upscaled one
+    # under it whose timestamps round half to even (0.25 → "0.2"), here with a spoken question.
+    ("A clip of the shelf.", None, "video:clip", [
+        ("stocked", {"type": "noul", "instructions": "Is the shelf stocked?"}),
+        ("aisle", {"type": "choice", "instructions": "Which aisle?", "criteria": {"dairy": "Dairy", "bakery": None}}),
+    ]),
+    (None, None, "video:long", [
+        ("busy", {"type": "score", "instructions": "How busy is it?", "criteria": ["empty", "busy", "packed"]}),
+    ]),
+    ("Tiny.", None, "video:tiny", [
+        ("moving", {"type": "noul", "instructions": {"spoken": "ask"}}),
+    ]),
 ]
 PICTURES = {"small": (200, 150, 21)}
+VIDEO = 123
+VIDEO_TOKENS = {"<|video|>": VIDEO}
+# d1-Omni-2B's video processor, with the tiny checkpoint's pixel budget (8,192 to 200,000 pixels a clip),
+# so the clips below take both of `smart_resize`'s branches.
+VIDEO_PROCESSOR = {
+    "cap_pixels_per_frame": False, "do_convert_rgb": True, "do_normalize": True, "do_rescale": True, "do_resize": True,
+    "do_sample_frames": True, "fps": 2.0, "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5],
+    "max_frames": 384, "max_video_tokens": 768, "merge_size": 2, "min_frames": 4, "patch_size": 16, "resample": 3,
+    "rescale_factor": 0.00392156862745098, "return_metadata": False,
+    "size": {"longest_edge": 200000, "shortest_edge": 8192}, "temporal_patch_size": 2,
+    "video_processor_type": "Lfm3VlVideoProcessor",
+}
+# name: (width, height, salt, frames, fps); frame i is tools/resize_fixture.py's picture with salt + 7 i.
+VIDEOS = {"clip": (160, 120, 31, 25, 10.0), "long": (240, 180, 37, 90, 29.97), "tiny": (20, 20, 41, 4, 2.0)}
 
 
 def pcm(count, salt):
@@ -222,6 +253,84 @@ def log_mel(waveform):
 # -------------------------------------------------------------------------------------
 
 
+# --- video_processing_lfm3_vl.py, processing_lfm3_omni.py (Apache-2.0) ---------------
+def sample_frames(total_num_frames, video_fps, fps=2.0, min_frames=4, max_frames=384):
+    num_frames = int(total_num_frames / video_fps * fps)
+    num_frames = min(max(num_frames, min_frames), max_frames, total_num_frames)
+    return np.linspace(0, total_num_frames - 1, num_frames).round().astype(int)
+
+
+def video_smart_resize(num_frames, height, width, temporal_factor=2, factor=28, min_pixels=112 * 112,
+                       max_pixels=14 * 14 * 2 * 2 * 2 * 6144):
+    if num_frames < temporal_factor:
+        raise ValueError(f"t:{num_frames} must be larger than temporal_factor:{temporal_factor}")
+    if height < factor or width < factor:
+        scale = max(factor / height, factor / width)
+        height = int(height * scale)
+        width = int(width * scale)
+    if max(height, width) / min(height, width) > 200:
+        raise ValueError("absolute aspect ratio must be smaller than 200")
+    h_bar = round(height / factor) * factor
+    w_bar = round(width / factor) * factor
+    t_bar = round(num_frames / temporal_factor) * temporal_factor
+    if t_bar * h_bar * w_bar > max_pixels:
+        beta = math.sqrt((num_frames * height * width) / max_pixels)
+        h_bar = max(factor, math.floor(height / beta / factor) * factor)
+        w_bar = max(factor, math.floor(width / beta / factor) * factor)
+    elif t_bar * h_bar * w_bar < min_pixels:
+        beta = math.sqrt(min_pixels / (num_frames * height * width))
+        h_bar = math.ceil(height * beta / factor) * factor
+        w_bar = math.ceil(width * beta / factor) * factor
+    return h_bar, w_bar
+
+
+def video_patchify(videos, patch_size, merge_size, temporal_patch_size):
+    batch_size, num_frames, channel, resized_height, resized_width = videos.shape
+    if pad := -num_frames % temporal_patch_size:
+        repeats = videos[:, -1:].expand(-1, pad, -1, -1, -1)
+        videos = torch.cat((videos, repeats), dim=1)
+        num_frames += pad
+    grid_t = num_frames // temporal_patch_size
+    grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+    patches = videos.view(batch_size, grid_t, temporal_patch_size, channel, grid_h // merge_size, merge_size,
+                          patch_size, grid_w // merge_size, merge_size, patch_size)
+    patches = patches.permute(0, 1, 4, 7, 5, 8, 3, 2, 6, 9)
+    flatten_patches = patches.reshape(batch_size, grid_t * grid_h * grid_w,
+                                      channel * temporal_patch_size * patch_size * patch_size)
+    return flatten_patches, grid_t, grid_h, grid_w
+
+
+def calculate_timestamps(indices, video_fps, temporal_patch_size):
+    indices = list(indices)
+    if pad := -len(indices) % temporal_patch_size:
+        indices.extend([indices[-1]] * pad)
+    return [(indices[i] + indices[i + temporal_patch_size - 1]) / (2 * video_fps)
+            for i in range(0, len(indices), temporal_patch_size)]
+# -------------------------------------------------------------------------------------
+
+
+def video_frames(name):
+    width, height, salt, count, _ = VIDEOS[name]
+    return [synthetic(width, height, salt + 7 * i) for i in range(count)]
+
+
+def process_video(name):
+    """The video processor on one clip: indices, resized frames, pixel values, grid, timestamps."""
+    width, height, salt, count, fps = VIDEOS[name]
+    v = VIDEO_PROCESSOR
+    indices = sample_frames(count, fps, v["fps"], v["min_frames"], v["max_frames"])
+    frames = np.stack([video_frames(name)[i] for i in indices])
+    tensor = torch.from_numpy(frames).permute(0, 3, 1, 2).contiguous()
+    h, w = video_smart_resize(len(indices), height, width, 2, 32, v["size"]["shortest_edge"], v["size"]["longest_edge"])
+    backend = Backend()
+    resized = backend.resize(image=tensor, size=SizeDict(height=h, width=w), resample=PILImageResampling(v["resample"]))
+    normalized = backend.rescale_and_normalize(resized, True, v["rescale_factor"], True,
+                                               tuple(v["image_mean"]), tuple(v["image_std"]))
+    patches, grid_t, grid_h, grid_w = video_patchify(normalized[None], 16, 2, 2)
+    return (indices.tolist(), resized.permute(0, 2, 3, 1).numpy(), patches[0].numpy(), [grid_t, grid_h, grid_w],
+            calculate_timestamps(indices.tolist(), fps, 2))
+
+
 def features_of(samples):
     """The extractor on one 16 kHz clip: (128, frames) float32."""
     clip = torch.from_numpy(np.asarray(samples, np.float32))
@@ -233,12 +342,12 @@ class Tokenizer:
     """tools/d1_2b_vision_fixture.py's stand-in with the audio placeholder too."""
 
     bos_token = "<|startoftext|>"
-    all_special_tokens = list(SPECIAL) + list(VISION_TOKENS) + list(AUDIO_TOKENS)
+    all_special_tokens = list(SPECIAL) + list(VISION_TOKENS) + list(AUDIO_TOKENS) + list(VIDEO_TOKENS)
     d1_codes = CODES
     d1_numbers = False
     d1_prompt = 1
     d1_box_edges = "median"
-    added = {**ADDED, **VISION_TOKENS, **AUDIO_TOKENS}
+    added = {**ADDED, **VISION_TOKENS, **AUDIO_TOKENS, **VIDEO_TOKENS}
 
     def encode(self, text, add_special_tokens=False):
         if text in WORDS:
@@ -280,7 +389,8 @@ def main():
         "mixed_start_token_id": 106, "eos_token_id": [102, 127], "num_codebooks": 3, "codebook_size": 5,
         "audio_eos_code": 4, "maskgit_schedule": [1, 1, 1], "d1_vision_max_pixels": MAX_PIXELS,
     }
-    processor = {**VISION_PROCESSOR, "feature_extractor": FEATURE_EXTRACTOR, "audio_token": "<|audio|>",
+    processor = {**VISION_PROCESSOR, "feature_extractor": FEATURE_EXTRACTOR, "video_processor": VIDEO_PROCESSOR,
+                 "video_token": "<|video|>", "audio_token": "<|audio|>",
                  "audio_markers": True, "processor_class": "Lfm3OmniProcessor"}
 
     # transformers' layout: d1_2b_vision_tiny's text and vision weights, a random audio encoder and projector.
@@ -368,6 +478,20 @@ def main():
         _, pixels, grid = process(capped)
         pictures[name] = model.encode_images(mx.array(pixels), image_grid_thw=mx.array([grid]))
 
+    videos, video_features = {}, {}
+    for name, (width, height, salt, count, fps) in VIDEOS.items():
+        indices, resized, pixels, grid, seconds = process_video(name)
+        features = model.encode_images(mx.array(pixels), image_grid_thw=mx.array([grid]))
+        tokens = grid[1] * grid[2] // 4
+        assert features.shape[0] == grid[0] * tokens
+        markup = "<|vision_start|>" + "".join(
+            f"<{t:.1f} seconds><|vision_start|>{'<|video|>' * tokens}<|vision_end|>" for t in seconds) + "<|vision_end|>"
+        video_features[name] = (features, markup)
+        videos[name] = {"source": [width, height, salt, count, fps], "indices": indices,
+                        "resized": list(resized.shape[1:3]), "resized_sha256": [sha(f) for f in resized],
+                        "groups": grid[0], "tokens": tokens, "seconds": seconds, "markup": markup,
+                        "features": summary(features.astype(mx.float32))}
+
     requests = []
     def spoken_markup(name):
         return f"<|vision_start|>{'<|audio|>' * encoded[name].shape[0]}<|vision_end|>"
@@ -382,6 +506,9 @@ def main():
         if clip is not None:
             state_media = [(AUDIO, encoded[clip])]
             markup = spoken_markup(clip)
+        elif picture is not None and picture.startswith("video:"):
+            features, markup = video_features[picture[len("video:"):]]
+            state_media = [(VIDEO, features)]
         elif picture is not None:
             state_media = [(VISION_TOKENS["<|image|>"], pictures[picture])]
             markup = f"<|vision_start|>{'<|image|>' * pictures[picture].shape[0]}<|vision_end|>"
@@ -411,7 +538,9 @@ def main():
                 best = logits[:, forms].max(-1)[0].tolist()
                 answers.append(answer(q, probabilities(q, best, CALIBRATION)))
             rows.append({"ids": ids, "state": state_len, "question": question, "ends": [e[0] for e in ends]})
-        requests.append({"clip": clip, "picture": picture, "voices": voices, "rows": rows, "tokens": read,
+        video = picture[len("video:"):] if picture is not None and picture.startswith("video:") else None
+        picture = None if video is not None else picture
+        requests.append({"clip": clip, "picture": picture, "video": video, "voices": voices, "rows": rows, "tokens": read,
                          "answers": [{"id": n, **a} for (n, _), a in zip(named, answers)]})
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -427,7 +556,8 @@ def main():
            "codes": CODES, "max_pixels": MAX_PIXELS,
            "calibration": {"default": CALIBRATION.default, "temperatures": CALIBRATION.temperatures},
            "special": Tokenizer.all_special_tokens, "added": Tokenizer.added, "words": WORDS,
-           "clips": clips, "pictures": {n: list(v) for n, v in PICTURES.items()}, "requests": requests}
+           "clips": clips, "pictures": {n: list(v) for n, v in PICTURES.items()}, "videos": videos,
+           "requests": requests}
     (OUTPUT / "fixture.json").write_text(json.dumps(out, ensure_ascii=False, indent=1) + "\n")
     print("wrote", OUTPUT)
 

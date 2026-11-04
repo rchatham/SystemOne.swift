@@ -42,7 +42,36 @@ public struct LFM3VLVisionConfiguration: Equatable, Sendable {
     public let imageStd: [Double]
     public let rescaleFactor: Double
 
+    /// The video processor (`processor_config.json`'s `video_processor`, with
+    /// the reference's defaults) and the token its features fill; `nil`
+    /// without a `video_token_id`.
+    public let video: Video?
+
     public var headDimension: Int { hiddenSize / attentionHeads }
+
+    /// LFM3-VL's video settings.
+    public struct Video: Equatable, Sendable {
+        /// The placeholder token video features replace (`<|video|>`).
+        public let tokenID: Int
+        /// Frames sampled per second of video.
+        public let fps: Double
+        public let minFrames: Int
+        public let maxFrames: Int
+        /// The whole clip's pixel budget, frames times frame area (`size`).
+        public let minPixels: Int
+        public let maxPixels: Int
+        /// Caps each frame at `maxVideoTokens` merged patches or its share of the budget.
+        public let capPixelsPerFrame: Bool
+        public let maxVideoTokens: Int
+        public let resampling: LFM2VLVisionConfiguration.Resampling
+        public let mean: [Double]
+        public let std: [Double]
+        public let rescaleFactor: Double
+        /// LFM3-Omni's timestamp (`processing_lfm3_omni.py`): the group's first and
+        /// last frame indices summed, then divided by twice the clip's rate;
+        /// LFM3-VL's (`processing_lfm3_vl.py`) averages the two frames' times.
+        public let sumsIndices: Bool
+    }
 
     /// Reads `config.json` and the `image_processor` of `processor_config.json`
     /// (or `preprocessor_config.json`), with the reference's defaults for missing keys.
@@ -58,11 +87,12 @@ public struct LFM3VLVisionConfiguration: Equatable, Sendable {
         guard let config = try object("config.json") else { throw LFM2ConfigurationError.missing("config.json") }
         let processor = try object("processor_config.json")?["image_processor"] as? [String: Any]
             ?? object("preprocessor_config.json") ?? [:]
-        try self.init(json: config, processor: processor)
+        let video = try object("processor_config.json")?["video_processor"] as? [String: Any] ?? [:]
+        try self.init(json: config, processor: processor, video: video)
     }
 
     /// `json` is an LFM3-VL `config.json`; `processor` its image processor's settings.
-    public init(json: [String: Any], processor: [String: Any]) throws {
+    public init(json: [String: Any], processor: [String: Any], video videoProcessor: [String: Any] = [:]) throws {
         guard let vision = json["vision_config"] as? [String: Any] else {
             throw LFM2ConfigurationError.missing("vision_config")
         }
@@ -123,6 +153,41 @@ public struct LFM3VLVisionConfiguration: Equatable, Sendable {
         imageMean = try doubles(processor, "image_mean")
         imageStd = try doubles(processor, "image_std")
         rescaleFactor = double(processor, "rescale_factor", 1.0 / 255)
+
+        if let token = json["video_token_id"] as? Int {
+            let v = videoProcessor
+            let videoSize = v["size"] as? [String: Any] ?? [:]
+            let resample = try int(v, "resample", LFM2VLVisionConfiguration.Resampling.bicubic.rawValue)
+            guard let videoResampling = LFM2VLVisionConfiguration.Resampling(rawValue: resample) else {
+                throw LFM2ConfigurationError.unsupported("video resample \(resample)")
+            }
+            guard try int(v, "patch_size", patchSize) == patchSize, try int(v, "merge_size", mergeSize) == mergeSize,
+                  try int(v, "temporal_patch_size", temporalPatchSize) == temporalPatchSize
+            else {
+                throw LFM2ConfigurationError.invalid("the video processor's patches and merges differ from the tower's")
+            }
+            let settings = Video(
+                tokenID: token,
+                fps: double(v, "fps", 2),
+                minFrames: try int(v, "min_frames", 4),
+                maxFrames: try int(v, "max_frames", 768),
+                minPixels: try int(v, "min_pixels", try int(videoSize, "shortest_edge", 4_096)),
+                maxPixels: try int(v, "max_pixels", try int(videoSize, "longest_edge", 25_165_824)),
+                capPixelsPerFrame: v["cap_pixels_per_frame"] as? Bool ?? false,
+                maxVideoTokens: try int(v, "max_video_tokens", 768),
+                resampling: videoResampling,
+                mean: try doubles(v, "image_mean"),
+                std: try doubles(v, "image_std"),
+                rescaleFactor: double(v, "rescale_factor", 1.0 / 255),
+                sumsIndices: json["model_type"] as? String == "lfm3_omni" || json["audio_encoder_config"] != nil
+            )
+            guard settings.fps > 0, settings.minFrames >= 1, settings.minFrames <= settings.maxFrames,
+                  settings.minPixels <= settings.maxPixels, settings.maxVideoTokens > 0
+            else { throw LFM2ConfigurationError.invalid("video sampling or pixel budget") }
+            video = settings
+        } else {
+            video = nil
+        }
 
         let activation = json["projector_hidden_act"] as? String ?? "gelu"
         guard activation == "gelu" else { throw LFM2ConfigurationError.unsupported("projector_hidden_act \(activation)") }
@@ -320,6 +385,19 @@ public final class LFM3VLVision {
         visionStart + String(repeating: imageToken, count: featureCount) + visionEnd
     }
 
+    public static let videoToken = "<|video|>"
+
+    /// The chat template's `<|vision_start|><|video|><|vision_end|>` with the
+    /// processor's expansion of `<|video|>`: per temporal group, its time
+    /// (`<{t:.1f} seconds>`, Python's `.1f`) and its `<|video|>` tokens in
+    /// their own `<|vision_start|>`…`<|vision_end|>`.
+    public static func videoMarkup(_ layout: LFM3VLVideoLayout) -> String {
+        visionStart + layout.seconds.map { seconds in
+            "<" + String(format: "%.1f", seconds) + " seconds>" + visionStart
+                + String(repeating: videoToken, count: layout.tokensPerGroup) + visionEnd
+        }.joined() + visionEnd
+    }
+
     /// `image` resized as the processor resizes it: `(height, width, RGB bytes)`.
     public static func resized(_ image: RGBImage, configuration c: LFM3VLVisionConfiguration) throws -> (height: Int, width: Int, pixels: [UInt8]) {
         let size = try smartResize(height: image.height, width: image.width, configuration: c)
@@ -331,6 +409,81 @@ public final class LFM3VLVision {
         return (size.height, size.width, pixels)
     }
 
+    // MARK: - Video
+
+    /// `sample_frames`: `int(frames / fps · rate)` frames, at least
+    /// `min_frames` and at most `max_frames` and the clip, spread evenly
+    /// (`np.linspace(0, frames - 1, count).round()`).
+    public static func sampledFrames(total: Int, fps: Double, video v: LFM3VLVisionConfiguration.Video) -> [Int] {
+        guard total > 0 else { return [] }
+        let wanted = Int(Double(total) / fps * v.fps)
+        let count = min(max(wanted, v.minFrames), v.maxFrames, total)
+        guard count > 1 else { return [0] }
+        let step = Double(total - 1) / Double(count - 1)
+        return (0..<count).map { $0 == count - 1 ? total - 1 : Int((Double($0) * step).rounded(.toNearestOrEven)) }
+    }
+
+    /// The video processor's `smart_resize`: one frame size, multiples of
+    /// `patch · merge`, with the clip's frames times frame area within the
+    /// pixel budget (each frame capped first with `cap_pixels_per_frame`).
+    public static func smartResize(
+        frames: Int, height: Int, width: Int, configuration c: LFM3VLVisionConfiguration
+    ) throws -> (height: Int, width: Int) {
+        guard let v = c.video else { throw LFM2ConfigurationError.missing("video_token_id") }
+        let temporal = c.temporalPatchSize
+        guard frames >= temporal else { throw LFM3VLVideoError.tooShort(frames: frames, minimum: temporal) }
+        let factor = c.patchSize * c.mergeSize
+        var maxPixels = v.maxPixels
+        if v.capPixelsPerFrame {
+            let perFrame = max(min(v.maxVideoTokens * factor * factor, v.maxPixels / frames), Int(Double(v.minPixels) * 1.05))
+            maxPixels = perFrame * frames
+        }
+        var (h0, w0) = (height, width)
+        if h0 < factor || w0 < factor {
+            let scale = max(Double(factor) / Double(h0), Double(factor) / Double(w0))
+            (h0, w0) = (Int(Double(h0) * scale), Int(Double(w0) * scale))
+        }
+        guard Double(max(h0, w0)) / Double(min(h0, w0)) <= 200 else {
+            throw LFM2ConfigurationError.unsupported("an aspect ratio of \(max(h0, w0) / min(h0, w0)) or more")
+        }
+        var h = Int((Double(h0) / Double(factor)).rounded(.toNearestOrEven)) * factor
+        var w = Int((Double(w0) / Double(factor)).rounded(.toNearestOrEven)) * factor
+        let t = Int((Double(frames) / Double(temporal)).rounded(.toNearestOrEven)) * temporal
+        if t * h * w > maxPixels {
+            let beta = (Double(frames * h0 * w0) / Double(maxPixels)).squareRoot()
+            h = max(factor, Int((Double(h0) / beta / Double(factor)).rounded(.down)) * factor)
+            w = max(factor, Int((Double(w0) / beta / Double(factor)).rounded(.down)) * factor)
+        } else if t * h * w < v.minPixels {
+            let beta = (Double(v.minPixels) / Double(frames * h0 * w0)).squareRoot()
+            h = Int((Double(h0) * beta / Double(factor)).rounded(.up)) * factor
+            w = Int((Double(w0) * beta / Double(factor)).rounded(.up)) * factor
+        }
+        return (h, w)
+    }
+
+    /// How a clip of `total` frames `width × height` at `fps` is read: the
+    /// frames sampled, their size, and each temporal group's tokens and time.
+    public static func videoLayout(
+        total: Int, width: Int, height: Int, fps: Double, configuration c: LFM3VLVisionConfiguration
+    ) throws -> LFM3VLVideoLayout {
+        guard let v = c.video else { throw LFM2ConfigurationError.missing("video_token_id") }
+        guard fps.isFinite, fps > 0 else { throw LFM3VLVideoError.fps(fps) }
+        let indices = sampledFrames(total: total, fps: fps, video: v)
+        let size = try smartResize(frames: indices.count, height: height, width: width, configuration: c)
+        let temporal = c.temporalPatchSize
+        var padded = indices
+        while padded.count % temporal != 0 { padded.append(padded[padded.count - 1]) }
+        // LFM3-Omni sums the group's first and last indices over twice the clip's
+        // rate; LFM3-VL averages the two frames' times. They can print different
+        // tenths (10 fps, frames 1 and 2: 0.1 and 0.2).
+        let seconds = stride(from: 0, to: padded.count, by: temporal).map { start -> Double in
+            let (first, last) = (padded[start], padded[start + temporal - 1])
+            return v.sumsIndices ? Double(first + last) / (2 * fps) : (Double(first) / fps + Double(last) / fps) / 2
+        }
+        let tokens = (size.height / c.patchSize) * (size.width / c.patchSize) / (c.mergeSize * c.mergeSize)
+        return LFM3VLVideoLayout(indices: indices, height: size.height, width: size.width, tokensPerGroup: tokens, seconds: seconds)
+    }
+
     // MARK: - The tower and projector
 
     /// `[featureCount, textHidden]` features for one picture, in the order its
@@ -338,20 +491,58 @@ public final class LFM3VLVision {
     public func callAsFunction(_ image: RGBImage) throws -> MLXArray {
         let c = configuration
         let view = try Self.resized(image, configuration: c)
-        let (rows, columns) = (view.height / c.patchSize, view.width / c.patchSize)
+        let frame = normalized(view.pixels, height: view.height, width: view.width, mean: c.imageMean, std: c.imageStd, rescale: c.rescaleFactor)
+        // The picture is every frame of its temporal patch.
+        return encode(Array(repeating: frame, count: c.temporalPatchSize), rows: view.height / c.patchSize, columns: view.width / c.patchSize)
+    }
+
+    /// `[groups · tokensPerGroup, textHidden]` features for a video's sampled
+    /// frames (`LFM3VLVideoLayout.indices`), group after group: each group of
+    /// `temporal_patch_size` frames (the last frame repeated to fill the last
+    /// group) runs through the tower as one picture.
+    public func callAsFunction(video frames: [RGBImage], layout: LFM3VLVideoLayout) throws -> MLXArray {
+        let c = configuration
+        guard let v = c.video else { throw LFM2ConfigurationError.missing("video_token_id") }
+        guard frames.count == layout.indices.count, let first = frames.first,
+              frames.allSatisfy({ $0.width == first.width && $0.height == first.height })
+        else { throw LFM3VLVideoError.frames }
+        let filter: AntialiasedResize.Filter = v.resampling == .bicubic ? .cubic : .triangle
+        var normalizedFrames = frames.map { frame -> MLXArray in
+            let pixels = AntialiasedResize.resize(
+                frame.pixels, width: frame.width, height: frame.height, channels: 3,
+                toWidth: layout.width, toHeight: layout.height, filter: filter, kernel: .aten
+            )
+            return normalized(pixels, height: layout.height, width: layout.width, mean: v.mean, std: v.std, rescale: v.rescaleFactor)
+        }
+        let temporal = c.temporalPatchSize
+        while normalizedFrames.count % temporal != 0 { normalizedFrames.append(normalizedFrames[normalizedFrames.count - 1]) }
+        let (rows, columns) = (layout.height / c.patchSize, layout.width / c.patchSize)
+        let groups = stride(from: 0, to: normalizedFrames.count, by: temporal).map { start in
+            encode(Array(normalizedFrames[start ..< start + temporal]), rows: rows, columns: columns)
+        }
+        return groups.count == 1 ? groups[0] : concatenated(groups, axis: 0)
+    }
+
+    /// `[height, width, 3]` pixels in the tower's type, rescaled and normalized
+    /// as the processor's fused step: `(x - mean / r) / (std / r)`.
+    private func normalized(_ pixels: [UInt8], height: Int, width: Int, mean: [Double], std: [Double], rescale: Double) -> MLXArray {
+        let means = MLXArray(mean.map { Float($0 / rescale) })
+        let stds = MLXArray(std.map { Float($0 / rescale) })
+        return ((MLXArray(pixels, [height, width, 3]).asType(.float32) - means) / stds).asType(dataType)
+    }
+
+    /// The tower and projector over one temporal patch of `[rows · p, columns · p, 3]` frames.
+    private func encode(_ frames: [MLXArray], rows: Int, columns: Int) -> MLXArray {
+        let c = configuration
         let (m, p) = (c.mergeSize, c.patchSize)
         let count = rows * columns
-        // Rescaled and normalized as the processor's fused step: (x - mean / r) / (std / r).
-        let means = MLXArray(c.imageMean.map { Float($0 / c.rescaleFactor) })
-        let stds = MLXArray(c.imageStd.map { Float($0 / c.rescaleFactor) })
-        let normalized = ((MLXArray(view.pixels, [view.height, view.width, 3]).asType(.float32) - means) / stds).asType(dataType)
-        // Patches in merge-block order, each flattened as (channel, time, dy, dx) with the frame repeated over time.
-        let blocks = normalized
-            .reshaped(rows / m, m, p, columns / m, m, p, 3)
-            .transposed(0, 3, 1, 4, 6, 2, 5)
-            .reshaped(count, 3, 1, p, p)
-        let patches = concatenated(Array(repeating: blocks, count: c.temporalPatchSize), axis: 2)
-            .reshaped(count, 3 * c.temporalPatchSize * p * p)
+        // Patches in merge-block order, each flattened as (channel, time, dy, dx).
+        let blocks = frames.map {
+            $0.reshaped(rows / m, m, p, columns / m, m, p, 3)
+                .transposed(0, 3, 1, 4, 6, 2, 5)
+                .reshaped(count, 3, 1, p, p)
+        }
+        let patches = concatenated(blocks, axis: 2).reshaped(count, 3 * frames.count * p * p)
         var hidden = MLXFast.rmsNorm(patchifier(patches), weight: embeddingNorm, eps: c.normEpsilon)
         let rotation = Self.rotation(rows: rows, columns: columns, configuration: c)
         for layer in layers {
@@ -443,5 +634,36 @@ public final class LFM3VLVision {
         // Back to merge-block order.
         let blocks = convolved.reshaped(rows / m, m, columns / m, m, d).transposed(0, 2, 1, 3, 4).reshaped(rows * columns, d)
         return block.output(parts[1] * blocks)
+    }
+}
+
+/// How LFM3-VL reads a video: the frames it samples, the size they are
+/// resized to, and per temporal group its tokens and its time in seconds.
+public struct LFM3VLVideoLayout: Equatable, Sendable {
+    /// The sampled frames' indices in the clip.
+    public let indices: [Int]
+    public let height: Int
+    public let width: Int
+    /// `<|video|>` tokens (feature rows) per temporal group.
+    public let tokensPerGroup: Int
+    /// Per temporal group: the time its timestamp prints.
+    public let seconds: [Double]
+
+    public var featureCount: Int { tokensPerGroup * seconds.count }
+}
+
+public enum LFM3VLVideoError: Error, Equatable, Sendable {
+    case tooShort(frames: Int, minimum: Int)
+    case fps(Double)
+    case frames
+}
+
+extension LFM3VLVideoError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .tooShort(let frames, let minimum): return "A video needs at least \(minimum) sampled frames; this one has \(frames)."
+        case .fps(let fps): return "A video needs a positive frame rate; this one has \(fps)."
+        case .frames: return "A video's frames must all be the same size, one per sampled index."
+        }
     }
 }

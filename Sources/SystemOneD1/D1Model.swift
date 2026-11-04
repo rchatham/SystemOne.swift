@@ -68,6 +68,8 @@ final class D1Model {
             return images.reduce(0) { $0 + D1Vision.prefixLength(width: $1.width, height: $1.height) }
         case .audio(let clip):
             return D1Audio.prefixLength(sampleCount: clip.samples.count)
+        case .video:
+            return 0  // d1-omni-600M reads no video; `plan` refuses it first.
         }
     }
 
@@ -78,6 +80,8 @@ final class D1Model {
             return concatenated(images.map { vision($0) }, axis: 0)
         case .audio(let clip):
             return try audio(clip)
+        case .video:
+            throw SystemOneEngineError.unsupportedMedia(model: "d1-omni")
         }
     }
 

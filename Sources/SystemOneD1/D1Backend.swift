@@ -74,6 +74,8 @@ public final class D1Backend: DecisionBackend {
         case .images(let images):
             guard !images.isEmpty else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
             (mode, modeLength) = (.image, configuration.imageTextLength)
+        case .video:
+            throw SystemOneEngineError.unsupportedMedia(model: modelID)
         case .audio(let clip):
             guard clip.sampleRate == D1Audio.sampleRate, !clip.samples.isEmpty else {
                 throw SystemOneEngineError.unsupportedMedia(model: modelID)
