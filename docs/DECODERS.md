@@ -315,8 +315,9 @@ It is used by d1-Omni-2B.
   width-1 `Conv1d`), or mlx-vlm's `audio_tower.` and `audio_projector.` with
   MLX's `[out, kh, kw, in]`.
 
-`DecoderFeatures` takes a placeholder token per row, so one forward can mix
-rows with pictures, rows with a clip, and text rows.
+`DecoderFeatures` fills several placeholder tokens, each row with its own
+features per token. One forward can mix rows with pictures, rows with a clip
+and text rows, and one row can hold a picture state and spoken questions.
 
 ## LFM3 (`LFM3Trunk`)
 

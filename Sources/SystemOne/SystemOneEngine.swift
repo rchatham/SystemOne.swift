@@ -97,6 +97,9 @@ public actor SystemOneEngine {
     ) async throws -> SystemOneResponse {
         try validate(request.state)
         try validate(request.questions)
+        if request.questions.contains(where: { $0.spoken != nil }), !backend.hearsSpokenQuestions {
+            throw SystemOneEngineError.unsupportedMedia(model: modelID)
+        }
         return try await run(backend, request: request, media: media, strategy: batchingStrategy)
     }
 

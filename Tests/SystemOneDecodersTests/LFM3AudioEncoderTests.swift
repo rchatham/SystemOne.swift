@@ -93,7 +93,7 @@ final class LFM3AudioEncoderTests: XCTestCase {
     func testCountsFramesAndTokensAsTheExtractor() throws {
         let fixture = try LFM3AudioFixture.load()
         let c = try LFM3AudioConfiguration(modelFolder: LFM3AudioFixture.folder)
-        XCTAssertEqual(fixture.clips.count, 4)
+        XCTAssertEqual(fixture.clips.count, 6)
         for (name, info) in fixture.clips {
             let clip = LFM3AudioFixture.clip(info.source)
             let samples = try LFM3AudioEncoder.sampleCount(of: clip, configuration: c)

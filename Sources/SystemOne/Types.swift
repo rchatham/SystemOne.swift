@@ -125,10 +125,16 @@ public enum Question: Equatable, Sendable {
 public struct QuestionEntry: Equatable, Sendable {
     public let id: String
     public let question: Question
+    /// The question asked aloud: a backend that hears speech (d1-Omni-2B)
+    /// reads this clip where the question's instructions would be, and the
+    /// written instructions stay empty. Backends without speech refuse it,
+    /// and the wire format does not carry it.
+    public let spoken: AudioClip?
 
-    public init(id: String, question: Question) {
+    public init(id: String, question: Question, spoken: AudioClip? = nil) {
         self.id = id
         self.question = question
+        self.spoken = spoken
     }
 }
 
@@ -453,6 +459,12 @@ extension QuestionEntry: Codable {
     }
 
     public func encode(to encoder: Encoder) throws {
+        guard spoken == nil else {
+            throw EncodingError.invalidValue(self, EncodingError.Context(
+                codingPath: encoder.codingPath,
+                debugDescription: "Question \(id) is spoken; the wire format carries no audio."
+            ))
+        }
         var container = encoder.container(keyedBy: DynamicCodingKey.self)
         try container.encode(question, forKey: DynamicCodingKey(stringValue: id)!)
     }
@@ -510,6 +522,12 @@ extension SystemOneRequest {
             field: "SystemOneRequest.questions",
             path: encoder.codingPath
         )
+        if let entry = questions.first(where: { $0.spoken != nil }) {
+            throw EncodingError.invalidValue(entry, EncodingError.Context(
+                codingPath: encoder.codingPath,
+                debugDescription: "Question \(entry.id) is spoken; the wire format carries no audio."
+            ))
+        }
         var container = encoder.container(keyedBy: EnvelopeCodingKeys.self)
         try container.encode(model, forKey: .model)
         switch state {

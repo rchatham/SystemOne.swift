@@ -69,9 +69,15 @@ public protocol DecisionBackend: AnyObject {
 
     /// Runs one microbatch and returns its row-major logits.
     func logits(for rows: [Row]) async throws -> BatchLogitsOutput
+
+    /// Whether `plan` reads `QuestionEntry.spoken` clips. Defaults to `false`:
+    /// the engine refuses spoken questions for a backend that cannot hear them.
+    var hearsSpokenQuestions: Bool { get }
 }
 
 extension DecisionBackend {
+    public var hearsSpokenQuestions: Bool { false }
+
     public func microbatches(for rows: [Row], strategy: BatchingStrategy) -> [[Int]] {
         SystemOneEngine.microbatchIndices(
             sequenceLengths: rows.map(\.sequenceLength),
