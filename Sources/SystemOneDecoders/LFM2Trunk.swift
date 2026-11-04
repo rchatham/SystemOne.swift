@@ -175,8 +175,10 @@ public final class LFM2Trunk {
         let down: Linear
     }
 
-    private let embedding: Embedding
-    private let readout: Embedding
+    /// The token embeddings and tied (or separate) output rows; `nil` for a
+    /// stack that reads feature vectors (an audio encoder's).
+    private let embedding: Embedding?
+    private let readout: Embedding?
     private let layers: [Layer]
     private let finalNorm: MLXArray
 
@@ -192,14 +194,21 @@ public final class LFM2Trunk {
     /// (`model.language_model.`, mlx-vlm's `language_model.model.`, `model.`).
     /// Convolution kernels may be `[channels, 1, kernel]` or MLX's
     /// `[channels, kernel, 1]`. Vision tensors are ignored.
-    public init(store: any TensorStore, configuration: LFM2Configuration, dataType: DType = .float32) throws {
+    public convenience init(store: any TensorStore, configuration: LFM2Configuration, dataType: DType = .float32) throws {
+        guard let prefix = ["model.language_model.", "language_model.model.", "language_model.", "model.", ""]
+            .first(where: { store.descriptors["\($0)embed_tokens.weight"] != nil })
+        else { throw WeightsError.tensorSetMismatch(missing: ["embed_tokens.weight"], unexpected: []) }
+        try self.init(store: store, configuration: configuration, prefix: prefix, dataType: dataType)
+    }
+
+    /// Loads the layers under `prefix` (`layers.N.…`, `embedding_norm`), with
+    /// the token embeddings when `prefix` has `embed_tokens`: an encoder's
+    /// stack (LFM3-Omni's audio trunk) has none and reads feature vectors.
+    public init(store: any TensorStore, configuration: LFM2Configuration, prefix: String, dataType: DType = .float32) throws {
         self.configuration = configuration
         self.dataType = dataType
         let c = configuration
         let d = c.hiddenSize
-        guard let prefix = ["model.language_model.", "language_model.model.", "language_model.", "model.", ""]
-            .first(where: { store.descriptors["\($0)embed_tokens.weight"] != nil })
-        else { throw WeightsError.tensorSetMismatch(missing: ["embed_tokens.weight"], unexpected: []) }
 
         func check(_ name: String, _ shape: [Int]) throws {
             let module = String(name.dropLast(".weight".count))
@@ -220,12 +229,17 @@ public final class LFM2Trunk {
             return try store.requiredTensor(name).mlxArray(dataType)
         }
 
-        try check("\(prefix)embed_tokens.weight", [c.vocabSize, d])
-        let input = try store.embedding("\(prefix)embed_tokens", width: d, dataType: dataType)
-        embedding = input
-        if c.tieWordEmbeddings {
+        if store.descriptors["\(prefix)embed_tokens.weight"] == nil, store.descriptors["\(prefix)embed_tokens.scales"] == nil {
+            embedding = nil
+            readout = nil
+        } else if c.tieWordEmbeddings {
+            try check("\(prefix)embed_tokens.weight", [c.vocabSize, d])
+            let input = try store.embedding("\(prefix)embed_tokens", width: d, dataType: dataType)
+            embedding = input
             readout = input
         } else {
+            try check("\(prefix)embed_tokens.weight", [c.vocabSize, d])
+            embedding = try store.embedding("\(prefix)embed_tokens", width: d, dataType: dataType)
             guard let head = ["lm_head", "language_model.lm_head"].first(where: { store.descriptors["\($0).weight"] != nil }) else {
                 throw WeightsError.tensorSetMismatch(missing: ["lm_head.weight"], unexpected: [])
             }
@@ -299,8 +313,26 @@ public final class LFM2Trunk {
         )
     }
 
+    /// Final-norm hidden states `[rows, width, hidden]` for feature vectors
+    /// `[rows, width, hidden]` (no token embeddings), causal over the last
+    /// `window` positions when given (an audio encoder's sliding window).
+    public func callAsFunction(embeddings: MLXArray, window: Int? = nil) throws -> MLXArray {
+        guard embeddings.ndim == 3, embeddings.dim(2) == configuration.hiddenSize, embeddings.dim(1) > 0 else {
+            throw DecoderError.emptyBatch
+        }
+        let (rows, width) = (embeddings.dim(0), embeddings.dim(1))
+        let attention = DecoderAttention(lengths: Array(repeating: width, count: rows))
+        let mask = window.map {
+            MLXFast.ScaledDotProductAttentionMaskMode.array(
+                LFM3Trunk.slidingMask(lengths: attention.lengths, width: width, prefix: 0, window: $0)
+            )
+        }
+        return try forward(hidden: embeddings.asType(dataType), attention: attention, read: nil, write: nil, mask: mask)
+    }
+
     /// Output-embedding rows `[ids.count, hidden]`, dequantized.
     public func readoutRows(_ ids: [Int]) throws -> MLXArray {
+        guard let readout else { throw DecoderError.noEmbeddings }
         for id in ids where !(0..<configuration.vocabSize).contains(id) {
             throw DecoderError.invalidTokenID(row: 0, column: 0, value: id)
         }
@@ -311,22 +343,34 @@ public final class LFM2Trunk {
         _ ids: [[Int]], width: Int, attention: DecoderAttention, read: DecoderCache?, write: DecoderCache?,
         features: DecoderFeatures?
     ) throws -> MLXArray {
+        guard let embedding else { throw DecoderError.noEmbeddings }
+        let hidden = try DecoderBatch.embed(ids, width: width, embedding: embedding, features: features)
+        return try forward(hidden: hidden, attention: attention, read: read, write: write, mask: nil)
+    }
+
+    /// The layers over input vectors `[rows, width, hidden]`; `mask`, when
+    /// given, replaces the attention plan's mask.
+    private func forward(
+        hidden input: MLXArray, attention: DecoderAttention, read: DecoderCache?, write: DecoderCache?,
+        mask override: MLXFast.ScaledDotProductAttentionMaskMode?
+    ) throws -> MLXArray {
         let c = configuration
-        let rows = ids.count
+        let rows = input.dim(0)
+        let width = input.dim(1)
         let prefixLength = read?.length ?? 0
         let positions = attention.positionIDs(width: width, prefix: prefixLength)
         let highest = Int(positions.max() ?? 0)
         guard highest < c.maxPositionEmbeddings else {
             throw DecoderError.sequenceTooLong(maximum: c.maxPositionEmbeddings, actual: highest + 1)
         }
-        let mask: MLXFast.ScaledDotProductAttentionMaskMode = attention.isPlainCausal(width: width)
+        let mask: MLXFast.ScaledDotProductAttentionMaskMode = override ?? (attention.isPlainCausal(width: width)
             ? .causal
-            : .array(attention.mask(width: width, prefix: prefixLength))
+            : .array(attention.mask(width: width, prefix: prefixLength)))
         let rotation = attention.hasDefaultPositions(prefix: prefixLength)
             ? nil
             : Qwen35Trunk.rotation(positions: MLXArray(positions, [rows, width]), theta: c.ropeTheta, dimension: c.headDimension)
 
-        var hidden = try DecoderBatch.embed(ids, width: width, embedding: embedding, features: features)
+        var hidden = input
         for (index, layer) in layers.enumerated() {
             let input = MLXFast.rmsNorm(hidden, weight: layer.operatorNorm, eps: c.normEpsilon)
             if let block = layer.attention {

@@ -226,6 +226,8 @@ public struct D1SetRow: PlannedRow, Equatable, Sendable {
     public let groups: [[[Int]]]
     /// The capped pictures whose features fill the state's `<|image|>` tokens.
     public let images: [RGBImage]
+    /// The clip whose features fill the state's `<|audio|>` tokens.
+    public let audio: AudioClip?
 
     public var sequenceLength: Int { ids.count }
     public var logitCount: Int { groups.reduce(0) { $0 + $1.count } }
@@ -248,19 +250,33 @@ public struct D1SetRow: PlannedRow, Equatable, Sendable {
 /// (Pillow's bicubic), written before the state as
 /// `<|vision_start|><|image|>…<|vision_end|>`, and encoded once by LFM3-VL's
 /// tower; their features fill the state's `<|image|>` tokens in every row.
-/// Audio, video, and the typed questions (multiple choice, extraction,
-/// estimates, boxes) are not supported yet.
+///
+/// With an `audio_encoder_config` (d1-Omni-2B, `LiquidAI/d1-Omni-2B`), a clip
+/// (`SystemOneMedia.audio`) is resampled to 16 kHz, written before the state
+/// as `<|vision_start|><|audio|>…<|vision_end|>`, and encoded once by
+/// LFM3-Omni's audio encoder; its features fill the `<|audio|>` tokens.
+/// Video, spoken questions, and the typed questions (multiple choice,
+/// extraction, estimates, boxes) are not supported yet.
 public final class D1SetBackend: DecisionBackend {
     public let modelID: String
     public let configuration: D1SetConfiguration
     let tokenizer: DecoderTokenizer
     /// The image processor's settings; `nil` for a text-only checkpoint.
     let visionConfiguration: LFM3VLVisionConfiguration?
+    /// The audio encoder's and feature extractor's settings; `nil` without speech.
+    let audioConfiguration: LFM3AudioConfiguration?
     private let trunk: LFM3Trunk?
     private let vision: LFM3VLVision?
+    private let audio: LFM3AudioEncoder?
     private let lock = NSLock()
-    /// The last pictures encoded, kept for the next microbatch of the same request.
-    private var featureCache: (images: [RGBImage], features: MLXArray)?
+    /// The last media encoded, kept for the next microbatch of the same request.
+    private var featureCache: (media: Media, features: MLXArray)?
+
+    /// A row's media, as encoded together.
+    private enum Media: Equatable {
+        case images([RGBImage])
+        case audio(AudioClip)
+    }
 
     public convenience init(modelFolder: URL, modelID: String = "d1-2B", dataType: DType = .bfloat16) throws {
         let data = try Data(contentsOf: modelFolder.appendingPathComponent("config.json"))
@@ -268,18 +284,22 @@ public final class D1SetBackend: DecisionBackend {
         let store = try SafetensorsCheckpoint(modelFolder: modelFolder)
         let visionConfiguration = try config["vision_config"] == nil ? nil : LFM3VLVisionConfiguration(modelFolder: modelFolder)
         let vision = try visionConfiguration.map { try LFM3VLVision(store: store, configuration: $0, dataType: dataType) }
+        let audioConfiguration = try config["audio_encoder_config"] == nil ? nil : LFM3AudioConfiguration(modelFolder: modelFolder)
+        let audio = try audioConfiguration.map { try LFM3AudioEncoder(store: store, configuration: $0, dataType: dataType) }
         self.init(
             modelID: modelID,
             configuration: try D1SetConfiguration(modelFolder: modelFolder),
             tokenizer: try HubDecoderTokenizer(folder: modelFolder),
             trunk: try LFM3Trunk(store: store, configuration: LFM3Configuration(modelFolder: modelFolder), dataType: dataType),
-            visionConfiguration: visionConfiguration, vision: vision
+            visionConfiguration: visionConfiguration, vision: vision,
+            audioConfiguration: audioConfiguration, audio: audio
         )
     }
 
     init(
         modelID: String, configuration: D1SetConfiguration, tokenizer: DecoderTokenizer, trunk: LFM3Trunk?,
-        visionConfiguration: LFM3VLVisionConfiguration? = nil, vision: LFM3VLVision? = nil
+        visionConfiguration: LFM3VLVisionConfiguration? = nil, vision: LFM3VLVision? = nil,
+        audioConfiguration: LFM3AudioConfiguration? = nil, audio: LFM3AudioEncoder? = nil
     ) {
         self.modelID = modelID
         self.configuration = configuration
@@ -287,16 +307,20 @@ public final class D1SetBackend: DecisionBackend {
         self.trunk = trunk
         self.visionConfiguration = vision?.configuration ?? visionConfiguration
         self.vision = vision
+        self.audioConfiguration = audio?.configuration ?? audioConfiguration
+        self.audio = audio
     }
 
     public func plan(_ request: SystemOneRequest, media: SystemOneMedia?) throws -> DecisionPlan<D1SetRow> {
         var images: [RGBImage] = []
+        var clip: AudioClip?
         var markup = ""
         var placeholders = 0
-        if let media {
-            guard case .images(let pictures) = media, let settings = visionConfiguration else {
-                throw SystemOneEngineError.unsupportedMedia(model: modelID)
-            }
+        switch media {
+        case nil:
+            break
+        case .images(let pictures)?:
+            guard let settings = visionConfiguration else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
             images = pictures.map { D1ChatPrompt.capPixels($0, limit: configuration.visionMaxPixels) }
             for image in images {
                 let size = try LFM3VLVision.smartResize(height: image.height, width: image.width, configuration: settings)
@@ -304,6 +328,11 @@ public final class D1SetBackend: DecisionBackend {
                 markup += LFM3VLVision.markup(featureCount: count)
                 placeholders += count
             }
+        case .audio(let value)?:
+            guard let settings = audioConfiguration else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+            placeholders = try LFM3AudioEncoder.featureCount(of: value, configuration: settings)
+            markup = LFM3AudioEncoder.markup(featureCount: placeholders)
+            clip = value
         }
         var suffixes: [String] = []
         var readouts: [[[Int]]] = []
@@ -336,11 +365,17 @@ public final class D1SetBackend: DecisionBackend {
                 questions += Array(repeating: offset + 1, count: own.count)
                 ends.append(ids.count - 1)
             }
-            // Every row repeats the state, and with it each picture's tokens.
+            // Every row repeats the state, and with it each picture's or the clip's tokens.
             if let token = visionConfiguration?.imageTokenID, !images.isEmpty {
                 let found = ids.filter { $0 == token }.count
                 guard found == placeholders else {
                     throw D1ChatError.imagePlaceholders(expected: placeholders, found: found)
+                }
+            }
+            if let token = audioConfiguration?.audioTokenID, clip != nil {
+                let found = ids.filter { $0 == token }.count
+                guard found == placeholders else {
+                    throw D1ChatError.audioPlaceholders(expected: placeholders, found: found)
                 }
             }
             var logitOffset = 0
@@ -360,7 +395,7 @@ public final class D1SetBackend: DecisionBackend {
             }
             rows.append(D1SetRow(
                 ids: ids, stateLength: stateLength, questions: questions, ends: ends,
-                groups: members.map { readouts[$0] }, images: images
+                groups: members.map { readouts[$0] }, images: images, audio: clip
             ))
         }
         return DecisionPlan(rows: rows, decisions: decisions, usage: Usage(inputTokens: rows.reduce(0) { $0 + $1.ids.count }))
@@ -382,7 +417,7 @@ public final class D1SetBackend: DecisionBackend {
         let hidden = try trunk(
             rows.map { $0.ids + Array(repeating: 0, count: width - $0.ids.count) },
             attention: DecoderAttention(lengths: lengths, plan: .visible(rows.map(\.visibility))),
-            features: try imageFeatures(rows)
+            features: try mediaFeatures(rows)
         )
         let slots = rows.enumerated().flatMap { index, row in row.ends.map { Int32(index * width + $0) } }
         let states = hidden.reshaped(-1, hidden.dim(-1)).take(MLXArray(slots), axis: 0).asType(.float32)
@@ -399,43 +434,68 @@ public final class D1SetBackend: DecisionBackend {
         }
     }
 
-    /// Each row's pictures' features, every picture set encoded once; `nil`
-    /// when no row has pictures.
-    private func imageFeatures(_ rows: [D1SetRow]) throws -> DecoderFeatures? {
-        guard let token = visionConfiguration?.imageTokenID, rows.contains(where: { !$0.images.isEmpty }) else { return nil }
-        guard let vision else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
-        var encoded: [(images: [RGBImage], features: MLXArray)] = []
+    /// Each row's media features, every picture set or clip encoded once;
+    /// `nil` when no row has media.
+    private func mediaFeatures(_ rows: [D1SetRow]) throws -> DecoderFeatures? {
+        let media = rows.map { row -> Media? in
+            if let clip = row.audio { return .audio(clip) }
+            return row.images.isEmpty ? nil : .images(row.images)
+        }
+        guard media.contains(where: { $0 != nil }) else { return nil }
+        var encoded: [(media: Media, features: MLXArray)] = []
         var features: [MLXArray?] = []
-        for row in rows {
-            guard !row.images.isEmpty else {
+        var tokens: [Int] = []
+        for item in media {
+            guard let item else {
                 features.append(nil)
+                tokens.append(visionConfiguration?.imageTokenID ?? audioConfiguration?.audioTokenID ?? -1)
                 continue
             }
-            if let known = encoded.first(where: { $0.images == row.images }) {
+            tokens.append(try placeholderToken(item))
+            if let known = encoded.first(where: { $0.media == item }) {
                 features.append(known.features)
                 continue
             }
-            let value = try encode(row.images, vision: vision)
-            encoded.append((images: row.images, features: value))
+            let value = try encode(item)
+            encoded.append((media: item, features: value))
             features.append(value)
         }
-        return DecoderFeatures(token: token, rows: features)
+        return DecoderFeatures(tokens: tokens, rows: features)
     }
 
-    /// `images`' features one after another, reusing the last pictures encoded.
-    private func encode(_ images: [RGBImage], vision: LFM3VLVision) throws -> MLXArray {
+    private func placeholderToken(_ media: Media) throws -> Int {
+        switch media {
+        case .images:
+            guard let token = visionConfiguration?.imageTokenID else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+            return token
+        case .audio:
+            guard let token = audioConfiguration?.audioTokenID else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+            return token
+        }
+    }
+
+    /// `media`'s features (pictures one after another), reusing the last media encoded.
+    private func encode(_ media: Media) throws -> MLXArray {
         lock.lock()
         defer { lock.unlock() }
-        if let cached = featureCache, cached.images == images { return cached.features }
-        let parts = try images.map { try vision($0) }
-        let value = parts.count == 1 ? parts[0] : concatenated(parts, axis: 0)
-        featureCache = (images: images, features: value)
+        if let cached = featureCache, cached.media == media { return cached.features }
+        let value: MLXArray
+        switch media {
+        case .images(let images):
+            guard let vision else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+            let parts = try images.map { try vision($0) }
+            value = parts.count == 1 ? parts[0] : concatenated(parts, axis: 0)
+        case .audio(let clip):
+            guard let audio else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+            value = try audio(clip)
+        }
+        featureCache = (media: media, features: value)
         return value
     }
 }
 
 extension SystemOneEngine {
-    /// d1-2B from a local folder.
+    /// d1-2B (or d1-Omni-2B, which adds audio) from a local folder.
     public static func d1Set(modelFolder: URL, dataType: DType = .bfloat16) throws -> SystemOneEngine {
         SystemOneEngine(backend: try D1SetBackend(modelFolder: modelFolder, dataType: dataType))
     }

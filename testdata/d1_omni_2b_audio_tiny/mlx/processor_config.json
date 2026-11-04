@@ -1,0 +1,46 @@
+{
+  "image_processor": {
+    "do_convert_rgb": true,
+    "do_normalize": true,
+    "do_rescale": true,
+    "do_resize": true,
+    "image_mean": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "image_processor_type": "Lfm3VlImageProcessor",
+    "image_std": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "merge_size": 2,
+    "patch_size": 16,
+    "resample": 3,
+    "rescale_factor": 0.00392156862745098,
+    "size": {
+      "longest_edge": 16777216,
+      "shortest_edge": 65536
+    },
+    "temporal_patch_size": 2
+  },
+  "processor_class": "Lfm3OmniProcessor",
+  "feature_extractor": {
+    "encoder_stride": 8,
+    "feature_extractor_type": "Lfm3OmniFeatureExtractor",
+    "feature_size": 128,
+    "hop_length": 160,
+    "log_floor": -12.0,
+    "n_fft": 400,
+    "normalization_divisor": 4.0,
+    "normalization_offset": 4.0,
+    "padding_side": "right",
+    "padding_value": 0.0,
+    "return_attention_mask": true,
+    "sampling_rate": 16000,
+    "win_length": 400
+  },
+  "audio_token": "<|audio|>",
+  "audio_markers": true
+}

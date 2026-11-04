@@ -285,6 +285,39 @@ as vendored with d1-2B, and mlx-vlm's `lfm3_vl` port. It is used by d1-2B.
 `LFM3Trunk` takes the features through `DecoderFeatures`, as `LFM2Trunk`
 does.
 
+## LFM3-Omni speech (`LFM3AudioEncoder`)
+
+`LFM3AudioEncoder` is LFM3-Omni's speech path. It follows transformers'
+LFM3-Omni code, as vendored with d1-Omni-2B, and mlx-vlm's `lfm3_audio` port.
+It is used by d1-Omni-2B.
+- **Front end:**
+  - The clip is resampled to the extractor's 16 kHz (`SincResample`, d1's
+    windowed sinc).
+  - It is right-padded to `n_fft + k · hop` samples. A periodic-Hann power
+    spectrum is taken every 10 ms (400-point FFT), then 128 Slaney mel
+    filters, `log10` floored at -12, and `(x + 4) / 4`. All of this runs in
+    float32.
+- **Encoder:**
+  - Three stride-2 3 × 3 convolutions over the (mel, time) plane. The last two
+    are depthwise, each followed by a 1 × 1 convolution, and each stage ends
+    in SiLU.
+  - A linear map of each step's channels × mel bins, channel-major.
+  - An LFM2 stack without embeddings (`LFM2Trunk(store:configuration:prefix:)`,
+    `callAsFunction(embeddings:window:)`): causal, its attention over the last
+    `sliding_window` positions (32 on d1-Omni-2B), then its final norm.
+  - One position per 8 frames.
+- **Projector:** a layer norm and two linear layers with GELU into the text
+  trunk's width.
+- **Markup:** `<|vision_start|>`, one `<|audio|>` per position,
+  `<|vision_end|>`.
+- **Weights:** transformers' `model.audio_encoder.` and `model.audio_projector.`
+  with torch's `[out, in, kh, kw]` kernels (`lin_out` a linear layer or a
+  width-1 `Conv1d`), or mlx-vlm's `audio_tower.` and `audio_projector.` with
+  MLX's `[out, kh, kw, in]`.
+
+`DecoderFeatures` takes a placeholder token per row, so one forward can mix
+rows with pictures, rows with a clip, and text rows.
+
 ## LFM3 (`LFM3Trunk`)
 
 `LFM3Trunk` is d1-2B's backbone. It follows mlx-vlm's Apache-2.0 `lfm3` port

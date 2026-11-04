@@ -207,6 +207,8 @@ public enum D1ChatError: Error, Equatable, Sendable {
     case noDigitTokens(levels: Int)
     /// The prompt's image tokens do not match its pictures' features.
     case imagePlaceholders(expected: Int, found: Int)
+    /// The prompt's audio tokens do not match its clip's features.
+    case audioPlaceholders(expected: Int, found: Int)
 }
 
 extension D1ChatError: LocalizedError {
@@ -217,6 +219,8 @@ extension D1ChatError: LocalizedError {
         case .noDigitTokens(let levels): return "A score with \(levels) levels needs single-token digits."
         case .imagePlaceholders(let expected, let found):
             return "The prompt holds \(found) image tokens where its pictures fill \(expected); text cannot contain the image token."
+        case .audioPlaceholders(let expected, let found):
+            return "The prompt holds \(found) audio tokens where its clip fills \(expected); text cannot contain the audio token."
         }
     }
 }

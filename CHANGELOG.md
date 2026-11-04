@@ -8,6 +8,18 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Added
 
+- d1-Omni-2B audio: `D1SetBackend` takes `SystemOneMedia.audio` when the
+  checkpoint has an `audio_encoder_config`.
+  - Clips are resampled to 16 kHz as d1's `media.py` does (new
+    `SincResample`) and written as `<|vision_start|><|audio|>…<|vision_end|>`
+    before the state.
+  - They are encoded once by the new `LFM3AudioEncoder` (LFM3-Omni's log-mel
+    front end, convolutional downsampler, sliding-window LFM2 stack, and
+    projector), and their features fill every set row's `<|audio|>` tokens.
+  - `LFM2Trunk` loads a stack without token embeddings under any prefix and
+    runs it over feature vectors with an optional sliding window.
+  - `DecoderFeatures` takes a placeholder token per row, so pictures, clips
+    and text share a forward.
 - d1-2B pictures: `D1SetBackend` takes `SystemOneMedia.images`.
   - Pictures are capped at `d1_vision_max_pixels` with Pillow's bicubic filter
     and written as `<|vision_start|><|image|>…<|vision_end|>` before the state.

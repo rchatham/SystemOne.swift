@@ -2,18 +2,24 @@ import Foundation
 import MLX
 import MLXNN
 
-/// Embeddings that stand in for a placeholder token's: each row's `token`
+/// Embeddings that stand in for a placeholder token's: each row's placeholder
 /// positions take that row's feature rows in order, as transformers'
-/// `masked_scatter` of image features does. A row with no placeholders takes
-/// `nil`.
+/// `masked_scatter` of image or audio features does. A row with no
+/// placeholders takes `nil`.
 public struct DecoderFeatures {
-    /// The placeholder token id (an image token).
-    public let token: Int
+    /// Per decoder row: the placeholder token id (an image or audio token).
+    public let tokens: [Int]
     /// Per decoder row: `[placeholders, hidden]` features, or `nil`.
     public let rows: [MLXArray?]
 
+    /// One placeholder token for every row.
     public init(token: Int, rows: [MLXArray?]) {
-        self.token = token
+        self.init(tokens: Array(repeating: token, count: rows.count), rows: rows)
+    }
+
+    /// A placeholder token per row: a batch may mix pictures and audio clips.
+    public init(tokens: [Int], rows: [MLXArray?]) {
+        self.tokens = tokens
         self.rows = rows
     }
 }
@@ -26,7 +32,7 @@ extension DecoderBatch {
         let rows = ids.count
         let tokens = embedding(MLXArray(ids.flatMap { $0.map(Int32.init) }, [rows, width]))
         guard let features else { return tokens }
-        guard features.rows.count == rows else {
+        guard features.rows.count == rows, features.tokens.count == rows else {
             throw DecoderError.featureCount(row: min(rows, features.rows.count), placeholders: 0, features: 0)
         }
         let hidden = tokens.dim(-1)
@@ -36,7 +42,7 @@ extension DecoderBatch {
         var parts = [tokens.reshaped(rows * width, hidden)]
         var next = rows * width
         for (row, tokenRow) in ids.enumerated() {
-            let slots = tokenRow.indices.filter { tokenRow[$0] == features.token }
+            let slots = tokenRow.indices.filter { tokenRow[$0] == features.tokens[row] }
             let count = features.rows[row].map { $0.ndim == 2 ? $0.dim(0) : -1 } ?? 0
             guard count == slots.count else {
                 throw DecoderError.featureCount(row: row, placeholders: slots.count, features: count)
