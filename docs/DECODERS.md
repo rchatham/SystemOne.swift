@@ -218,6 +218,45 @@ padded rows and for rows after a prefix that is filled in two prefills. The
 MLX tests match them within 1e-4; a Python MLX transliteration matches within
 6e-6.
 
+## LFM2-VL pictures (`LFM2VLVision`)
+
+`LFM2VLVision` is LFM2-VL's image path, following transformers'
+`Lfm2VlImageProcessor`, `Lfm2VlProcessor`, `Siglip2VisionModel` and
+`Lfm2VlMultiModalProjector`. It is used by d1-3B.
+- **Processor** (`processor_config.json`):
+  - A smart resize to a multiple of 32 pixels per side, holding 64–256 image
+    tokens.
+  - Pictures above twice that budget are cut into a grid of 2–10 tiles of 512
+    pixels, chosen by aspect ratio, plus a thumbnail.
+  - Views are resized with torchvision's uint8 antialiased kernel at the
+    configured `resample` (bicubic on d1-3B).
+  - `markup` writes the `<image>` expansion; `featureCount` gives its token
+    count.
+- **Tower:** SigLIP2 NaFlex over each view's 16-pixel patches, with its learned
+  16 × 16 position grid resampled to the view (antialiased bilinear in
+  float32). Then pre-norm layers and a post layer norm. Views of one size
+  (the tiles) run as one batch.
+- **Projector:** a 2 × 2 pixel unshuffle, an optional layer norm, and two linear
+  layers with GELU into the text trunk's width.
+- **Weights:** transformers' `model.vision_tower.` (with or without
+  `vision_model.`) and `model.multi_modal_projector.`, or mlx-vlm's
+  `vision_tower.` and `multi_modal_projector.`. Quantized linears load as such.
+
+`DecoderFeatures` puts the features into the trunk. Each row's placeholder
+tokens take its feature rows in order, as transformers' `masked_scatter`
+does. `LFM2Trunk` takes them in `callAsFunction` and `prefill`, and a row
+whose placeholders and feature rows differ in number is rejected.
+
+`AntialiasedResize` (`SystemOne`) reproduces the integer resizes bit for bit:
+- torchvision's ATen kernel: int16 weights at a per-axis precision, width
+  first;
+- Pillow 13's `Image.resize`: 22-bit weights, with height first when the
+  height shrinks by more than twice the width's shrink.
+
+It has the triangle and Keys cubic (a = −0.5) filters.
+`tools/resize_fixture.py` records both libraries' outputs, and
+`tools/d1_3b_vision_fixture.py` the processor's views (see [D1](D1.md)).
+
 ## LFM3 (`LFM3Trunk`)
 
 `LFM3Trunk` is d1-2B's backbone. It follows mlx-vlm's Apache-2.0 `lfm3` port

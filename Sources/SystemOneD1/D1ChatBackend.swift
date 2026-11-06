@@ -3,14 +3,16 @@ import MLX
 import SystemOne
 import SystemOneDecoders
 
-/// d1-3B's prompt and readout (`LiquidAI/d1-3B`, `prompt.py` and `api.py`, the
-/// published defaults: no system turn, `json_only` states, `desc` options, no
-/// lead, no calibration).
+/// d1-3B's prompt and readout (`LiquidAI/d1-3B`, `prompt.py`, `api.py`, and
+/// `runner.py`, the published defaults: no system turn, `json_only` states,
+/// `desc` options, no lead, no calibration).
 ///
-/// A state is written once, `<|im_start|>user\n{state}\n\n\nQUESTION:\n`, and
-/// each question follows it with its options under single-token codes, up to
-/// the assistant header. The answer is read off the next-token logits: each
-/// option scores its best token form, softmaxed over the options.
+/// A state is written once, `<|im_start|>user\n{images}{state}\n\n\nQUESTION:\n`,
+/// and each question follows it with its options under single-token codes, up
+/// to the assistant header. The answer is read off the next-token logits: each
+/// option scores its best token form, softmaxed over the options. Pictures are
+/// capped at one megapixel (Pillow's bicubic) and written as the chat
+/// template's `<image>` per picture, which LFM2-VL's processor expands.
 public enum D1ChatPrompt {
     static let yesForms = ["yes", "Yes", "YES"]
     static let noForms = ["no", "No", "NO"]
@@ -24,9 +26,27 @@ public enum D1ChatPrompt {
         return upper + digits + lower + numbered + pairs
     }()
 
-    /// The text before the questions: the user turn's head and the state.
-    public static func prefix(state: SystemOneState) -> String {
-        "<|im_start|>user\n" + stateBlock(state) + "\nQUESTION:\n"
+    /// Pixels a picture may have before the processor (`VISION_MAX_PIXELS`).
+    public static let maximumPixels = 1024 * 1024
+
+    /// The text before the questions: the user turn's head, the pictures'
+    /// markup (`images`), and the state.
+    public static func prefix(state: SystemOneState, images: String = "") -> String {
+        "<|im_start|>user\n" + images + stateBlock(state) + "\nQUESTION:\n"
+    }
+
+    /// `cap_pixels`: a picture over `limit` pixels downscaled with Pillow's
+    /// bicubic filter to `int(side · sqrt(limit / pixels))` per side.
+    public static func capPixels(_ image: RGBImage, limit: Int = D1ChatPrompt.maximumPixels) -> RGBImage {
+        let pixels = image.width * image.height
+        guard pixels > limit else { return image }
+        let scale = (Double(limit) / Double(pixels)).squareRoot()
+        let width = max(1, Int(Double(image.width) * scale))
+        let height = max(1, Int(Double(image.height) * scale))
+        return RGBImage(width: width, height: height, pixels: AntialiasedResize.resize(
+            image.pixels, width: image.width, height: image.height, channels: 3,
+            toWidth: width, toHeight: height, filter: .cubic, kernel: .pillow
+        ))
     }
 
     /// A text state as is; fields as `json.dumps(…, indent=2, ensure_ascii=False)`.
@@ -185,6 +205,8 @@ public enum D1ChatError: Error, Equatable, Sendable {
     case noAlias(options: Int)
     case noYesNoTokens
     case noDigitTokens(levels: Int)
+    /// The prompt's image tokens do not match its pictures' features.
+    case imagePlaceholders(expected: Int, found: Int)
 }
 
 extension D1ChatError: LocalizedError {
@@ -193,6 +215,8 @@ extension D1ChatError: LocalizedError {
         case .noAlias(let options): return "No single-token code is left for \(options) options."
         case .noYesNoTokens: return "The tokenizer has no single-token yes or no."
         case .noDigitTokens(let levels): return "A score with \(levels) levels needs single-token digits."
+        case .imagePlaceholders(let expected, let found):
+            return "The prompt holds \(found) image tokens where its pictures fill \(expected); text cannot contain the image token."
         }
     }
 }
@@ -204,6 +228,9 @@ public struct D1ChatRow: PlannedRow, Equatable, Sendable {
     public let prefix: [Int]
     public let ids: [Int]
     public let groups: [[Int]]
+    /// The capped pictures whose features fill the image tokens: those of
+    /// `prefix`, or of `ids` when there is no prefix.
+    public let images: [RGBImage]
 
     public var sequenceLength: Int { ids.count }
     public var logitCount: Int { groups.count }
@@ -215,37 +242,65 @@ public struct D1ChatRow: PlannedRow, Equatable, Sendable {
 /// A lone question is one pass over its whole prompt. Several questions share
 /// their state: it is prefilled once and every question continues it, which
 /// is the reference's tree (`hybrid.py`) evaluated as prefix and branches.
-/// Pictures are not supported yet.
+/// Pictures (`SystemOneMedia.images`) go through LFM2-VL's processor, SigLIP2
+/// tower, and projector, and their features fill the prompt's `<image>`
+/// tokens; audio is not supported.
 public final class D1ChatBackend: DecisionBackend {
     public let modelID: String
     let tokenizer: DecoderTokenizer
     let bos: Int?
+    /// The image processor's settings; `nil` for a text-only checkpoint.
+    let visionConfiguration: LFM2VLVisionConfiguration?
     private let trunk: LFM2Trunk?
+    private let vision: LFM2VLVision?
     private let lock = NSLock()
-    private var prefixCache: (ids: [Int], cache: DecoderCache)?
+    private var prefixCache: (ids: [Int], images: [RGBImage], cache: DecoderCache)?
 
-    /// Loads a d1-3B folder: `config.json`, `model.safetensors`, and the tokenizer.
+    /// Loads a d1-3B folder: `config.json`, the weights, the tokenizer, and,
+    /// when the config has a `vision_config`, the image path and `processor_config.json`.
     public convenience init(modelFolder: URL, modelID: String = "d1-3B", dataType: DType = .bfloat16) throws {
         let data = try Data(contentsOf: modelFolder.appendingPathComponent("config.json"))
         let config = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         let bos = config["bos_token_id"] as? Int ?? (config["text_config"] as? [String: Any])?["bos_token_id"] as? Int
+        let store = try SafetensorsCheckpoint(modelFolder: modelFolder)
+        let visionConfiguration = try config["vision_config"] == nil ? nil : LFM2VLVisionConfiguration(modelFolder: modelFolder)
+        let vision = try visionConfiguration.map { try LFM2VLVision(store: store, configuration: $0, dataType: dataType) }
         self.init(
             modelID: modelID, tokenizer: try HubDecoderTokenizer(folder: modelFolder), bos: bos,
-            trunk: try LFM2Trunk(modelFolder: modelFolder, dataType: dataType)
+            trunk: try LFM2Trunk(store: store, configuration: LFM2Configuration(modelFolder: modelFolder), dataType: dataType),
+            visionConfiguration: visionConfiguration, vision: vision
         )
     }
 
-    init(modelID: String, tokenizer: DecoderTokenizer, bos: Int?, trunk: LFM2Trunk?) {
+    init(
+        modelID: String, tokenizer: DecoderTokenizer, bos: Int?, trunk: LFM2Trunk?,
+        visionConfiguration: LFM2VLVisionConfiguration? = nil, vision: LFM2VLVision? = nil
+    ) {
         self.modelID = modelID
         self.tokenizer = tokenizer
         self.bos = bos
         self.trunk = trunk
+        self.visionConfiguration = vision?.configuration ?? visionConfiguration
+        self.vision = vision
     }
 
     public func plan(_ request: SystemOneRequest, media: SystemOneMedia?) throws -> DecisionPlan<D1ChatRow> {
-        guard media == nil else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+        var images: [RGBImage] = []
+        var markup = ""
+        var placeholders = 0
+        if let media {
+            guard case .images(let pictures) = media, let configuration = visionConfiguration else {
+                throw SystemOneEngineError.unsupportedMedia(model: modelID)
+            }
+            images = pictures.map { D1ChatPrompt.capPixels($0) }
+            for image in images {
+                let layout = LFM2VLVision.layout(width: image.width, height: image.height, configuration: configuration)
+                markup += LFM2VLVision.markup(layout, configuration: configuration)
+                placeholders += LFM2VLVision.featureCount(layout, configuration: configuration)
+            }
+        }
         let head = bos.map { [$0] } ?? []
-        let prefixText = D1ChatPrompt.prefix(state: request.state)
+        let prefixText = D1ChatPrompt.prefix(state: request.state, images: markup)
         let lone = request.questions.count == 1
         let prefix = lone ? [] : head + tokenizer.encode(prefixText)
         var rows: [D1ChatRow] = []
@@ -269,7 +324,15 @@ public final class D1ChatBackend: DecisionBackend {
                 let total = weights.reduce(0, +)
                 return D1ChatPrompt.answer(question, probabilities: weights.map { $0 / total })
             })
-            rows.append(D1ChatRow(prefix: prefix, ids: ids, groups: readout.groups))
+            rows.append(D1ChatRow(prefix: prefix, ids: ids, groups: readout.groups, images: images))
+        }
+        // The prompt's image tokens must be exactly those the pictures fill.
+        if !images.isEmpty, let token = visionConfiguration?.imageTokenID, let carrier = lone ? rows.first?.ids : prefix {
+            let found = carrier.filter { $0 == token }.count
+            let stray = lone ? 0 : rows.reduce(0) { total, row in total + row.ids.filter { $0 == token }.count }
+            guard found == placeholders, stray == 0 else {
+                throw D1ChatError.imagePlaceholders(expected: placeholders, found: found + stray)
+            }
         }
         let tokens = prefix.count + rows.reduce(0) { $0 + $1.ids.count }
         return DecisionPlan(rows: rows, decisions: decisions, usage: Usage(inputTokens: tokens))
@@ -287,20 +350,29 @@ public final class D1ChatBackend: DecisionBackend {
     func optionLogits(for rows: [D1ChatRow]) throws -> [[Float]] {
         guard let trunk else { preconditionFailure("D1ChatBackend has no model") }
         var result = [[Float]](repeating: [], count: rows.count)
-        var groups: [[Int]: [Int]] = [:]
-        var order: [[Int]] = []
+        // Rows sharing a prefix and pictures run together, in first-seen order.
+        var groups: [[Int]] = []
         for (index, row) in rows.enumerated() {
-            if groups[row.prefix] == nil { order.append(row.prefix) }
-            groups[row.prefix, default: []].append(index)
+            if let group = groups.firstIndex(where: { rows[$0[0]].prefix == row.prefix && rows[$0[0]].images == row.images }) {
+                groups[group].append(index)
+            } else {
+                groups.append([index])
+            }
         }
-        for prefix in order {
-            let members = groups[prefix]!
-            let cache = try prefix.isEmpty ? nil : prefixState(prefix, trunk: trunk)
+        for members in groups {
+            let first = rows[members[0]]
+            let cache = try first.prefix.isEmpty ? nil : prefixState(first.prefix, images: first.images, trunk: trunk)
+            // Without a prefix each row holds its own pictures' tokens.
+            var rowFeatures: DecoderFeatures?
+            if first.prefix.isEmpty, !first.images.isEmpty {
+                let value = try imageFeatures(first.images)
+                rowFeatures = DecoderFeatures(token: imageToken, rows: Array(repeating: value, count: members.count))
+            }
             let lengths = members.map { rows[$0].ids.count }
             let width = lengths.max() ?? 0
             let hidden = try trunk(
                 members.map { rows[$0].ids + Array(repeating: 0, count: width - rows[$0].ids.count) },
-                attention: DecoderAttention(lengths: lengths), prefix: cache
+                attention: DecoderAttention(lengths: lengths), prefix: cache, features: rowFeatures
             )
             let last = MLXArray(lengths.enumerated().map { Int32($0.offset * width + $0.element - 1) })
             let states = hidden.reshaped(-1, hidden.dim(-1)).take(last, axis: 0).asType(.float32)
@@ -317,15 +389,26 @@ public final class D1ChatBackend: DecisionBackend {
         return result
     }
 
-    /// The prefilled state of `prefix`, kept for the next microbatch of the
-    /// same request.
-    private func prefixState(_ prefix: [Int], trunk: LFM2Trunk) throws -> DecoderCache {
+    /// The image token id the pictures' features replace.
+    private var imageToken: Int { visionConfiguration?.imageTokenID ?? -1 }
+
+    /// `[tokens, hidden]` features of `images`, one after another.
+    private func imageFeatures(_ images: [RGBImage]) throws -> MLXArray {
+        guard let vision else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+        let features = images.map { vision($0) }
+        return features.count == 1 ? features[0] : concatenated(features, axis: 0)
+    }
+
+    /// The prefilled state of `prefix` and its pictures, kept for the next
+    /// microbatch of the same request.
+    private func prefixState(_ prefix: [Int], images: [RGBImage], trunk: LFM2Trunk) throws -> DecoderCache {
         lock.lock()
         defer { lock.unlock() }
-        if let cached = prefixCache, cached.ids == prefix { return cached.cache }
+        if let cached = prefixCache, cached.ids == prefix, cached.images == images { return cached.cache }
         let cache = DecoderCache()
-        try trunk.prefill(prefix, cache: cache)
-        prefixCache = (prefix, cache)
+        let placed = try images.isEmpty ? nil : DecoderFeatures(token: imageToken, rows: [imageFeatures(images)])
+        try trunk.prefill(prefix, cache: cache, features: placed)
+        prefixCache = (prefix, images, cache)
         return cache
     }
 }

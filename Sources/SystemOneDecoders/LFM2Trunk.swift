@@ -275,22 +275,28 @@ public final class LFM2Trunk {
     }
 
     /// Final-norm hidden states `[rows, width, hidden]` for right-padded rows,
-    /// after `prefix` when given (read, not changed).
-    public func callAsFunction(_ ids: [[Int]], attention: DecoderAttention? = nil, prefix: DecoderCache? = nil) throws -> MLXArray {
+    /// after `prefix` when given (read, not changed). `features` stand in for
+    /// placeholder tokens' embeddings (image features at `<image>`).
+    public func callAsFunction(
+        _ ids: [[Int]], attention: DecoderAttention? = nil, prefix: DecoderCache? = nil, features: DecoderFeatures? = nil
+    ) throws -> MLXArray {
         let width = try DecoderBatch.validate(ids, vocabularySize: configuration.vocabSize)
         let attention = attention ?? DecoderAttention(lengths: Array(repeating: width, count: ids.count))
         guard attention.lengths.count == ids.count else {
             throw DecoderError.invalidLength(row: min(attention.lengths.count, ids.count), length: 0)
         }
         try attention.validate(width: width)
-        return try forward(ids, width: width, attention: attention, read: prefix, write: nil)
+        return try forward(ids, width: width, attention: attention, read: prefix, write: nil, features: features)
     }
 
-    /// Extends `cache` with one causal row and returns its hidden states.
+    /// Extends `cache` with one causal row and returns its hidden states;
+    /// `features` (one row) fill the row's placeholder tokens.
     @discardableResult
-    public func prefill(_ ids: [Int], cache: DecoderCache) throws -> MLXArray {
+    public func prefill(_ ids: [Int], cache: DecoderCache, features: DecoderFeatures? = nil) throws -> MLXArray {
         let width = try DecoderBatch.validate([ids], vocabularySize: configuration.vocabSize)
-        return try forward([ids], width: width, attention: DecoderAttention(lengths: [width]), read: cache, write: cache)
+        return try forward(
+            [ids], width: width, attention: DecoderAttention(lengths: [width]), read: cache, write: cache, features: features
+        )
     }
 
     /// Output-embedding rows `[ids.count, hidden]`, dequantized.
@@ -302,7 +308,8 @@ public final class LFM2Trunk {
     }
 
     private func forward(
-        _ ids: [[Int]], width: Int, attention: DecoderAttention, read: DecoderCache?, write: DecoderCache?
+        _ ids: [[Int]], width: Int, attention: DecoderAttention, read: DecoderCache?, write: DecoderCache?,
+        features: DecoderFeatures?
     ) throws -> MLXArray {
         let c = configuration
         let rows = ids.count
@@ -319,7 +326,7 @@ public final class LFM2Trunk {
             ? nil
             : Qwen35Trunk.rotation(positions: MLXArray(positions, [rows, width]), theta: c.ropeTheta, dimension: c.headDimension)
 
-        var hidden = embedding(MLXArray(ids.flatMap { $0.map(Int32.init) }, [rows, width]))
+        var hidden = try DecoderBatch.embed(ids, width: width, embedding: embedding, features: features)
         for (index, layer) in layers.enumerated() {
             let input = MLXFast.rmsNorm(hidden, weight: layer.operatorNorm, eps: c.normEpsilon)
             if let block = layer.attention {

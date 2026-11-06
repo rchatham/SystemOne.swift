@@ -8,6 +8,15 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Added
 
+- d1-3B pictures: `D1ChatBackend` takes `SystemOneMedia.images`.
+  - Pictures are capped at one megapixel with Pillow's bicubic filter and
+    written as LFM2-VL's `<image>` markup before the state.
+  - They are encoded by the new `LFM2VLVision` (SigLIP2 NaFlex tower, tiling,
+    and projector, as transformers' LFM2-VL), and their features fill the
+    `<image>` tokens through `DecoderFeatures`.
+  - Several questions on one picture still share one prefilled state.
+- `AntialiasedResize` adds the cubic filter and Pillow's kernel next to
+  torchvision's, both reproduced bit for bit.
 - Wire schema, closer to TypeSafe's:
   - `instructions` is optional; a noul without it needs criteria.
   - Choice and noul criterion values may be objects or arrays, which reach
