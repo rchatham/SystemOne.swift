@@ -22,7 +22,7 @@ computes in float32.
 
     .venv-jev/bin/python tools/jev_golden_capture.py tiny            # write tiny model + fixture
     .venv-jev/bin/python tools/jev_golden_capture.py tiny --check    # verify them
-    .venv-jev/bin/python tools/jev_golden_capture.py full [--check]  # needs the JEV-9B snapshot
+    .venv-jev/bin/python tools/jev_golden_capture.py full [--check] [--model-folder weights/JEV-9B]
 """
 
 from __future__ import annotations
@@ -456,7 +456,10 @@ FULL_CASES = [
 PROBE_DIMENSIONS = [0, 1, 2, 3, 255, 256, 1023, 1024, 2047, 2048, 3071, 4093, 4094, 4095]
 
 
-def snapshot_path() -> Path:
+def snapshot_path(folder: str | None) -> Path:
+    """A local snapshot folder (``hf download --local-dir``), or the pinned revision in the HF cache."""
+    if folder:
+        return Path(folder).resolve()
     from huggingface_hub import snapshot_download
 
     return Path(snapshot_download(HF_REPO, revision=HF_REVISION, allow_patterns=SNAPSHOT_PATTERNS,
@@ -510,8 +513,8 @@ def full_fixture(snapshot: Path) -> dict:
     }
 
 
-def run_full(check: bool) -> int:
-    snapshot = snapshot_path()
+def run_full(check: bool, folder: str | None) -> int:
+    snapshot = snapshot_path(folder)
     validate_snapshot(snapshot)
     generated = full_fixture(snapshot)
     if check:
@@ -530,9 +533,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("fixture", choices=["tiny", "full"])
     parser.add_argument("--check", action="store_true", help="compare against the committed fixture")
+    parser.add_argument("--model-folder", help="full: a local JEV-9B snapshot instead of the HF cache")
     args = parser.parse_args(argv)
     runtime_check()
-    return run_tiny(args.check) if args.fixture == "tiny" else run_full(args.check)
+    return run_tiny(args.check) if args.fixture == "tiny" else run_full(args.check, args.model_folder)
 
 
 if __name__ == "__main__":

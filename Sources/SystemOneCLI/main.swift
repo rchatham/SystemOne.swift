@@ -4,6 +4,7 @@ import Foundation
 import SystemOneHTTP
 import SystemOne
 import SystemOneD1
+import SystemOneJev
 import SystemOneVon
 
 private enum CLIError: Error, LocalizedError {
@@ -37,6 +38,8 @@ private enum CLIError: Error, LocalizedError {
 private enum ServedModel {
     /// LiquidAI d1-omni from a local snapshot folder.
     case d1(folder: URL)
+    /// autotrust/JEV-9B from a local snapshot folder (one with `judge_config.json`).
+    case jev(folder: URL)
     /// von from its tokenizer folder and converted, verified safetensors.
     case von(tokenizerFolder: URL, weightsFile: URL)
 }
@@ -49,10 +52,11 @@ private struct ServeOptions {
 
 private let usage = """
     Usage:
-      system-one serve --port <port> --model-folder <local-d1-snapshot> [--host 127.0.0.1]
+      system-one serve --port <port> --model-folder <local-snapshot> [--host 127.0.0.1]
       system-one serve --port <port> --tokenizer <local-folder> --weights <local-safetensors> [--host 127.0.0.1]
 
-    The first form serves d1-omni-600M; the second serves the deprecated von model.
+    The first form serves d1-omni-600M, or JEV-9B when the folder holds a
+    judge_config.json; the second serves the deprecated von model.
 
     Environment:
       SYSTEMONE_API_KEY          Bearer token required by POST /v1/systemone when set.
@@ -118,8 +122,16 @@ private func parseServeOptions(_ arguments: [String]) throws -> ServeOptions {
     case (let folderPath?, nil, nil):
         let folder = URL(fileURLWithPath: folderPath).standardizedFileURL
         try requireDirectory(folder, option: "--model-folder", fileManager: fileManager)
-        try requireFiles(["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"], in: folder)
-        model = .d1(folder: folder)
+        if fileManager.fileExists(atPath: folder.appendingPathComponent("judge_config.json").path) {
+            try requireFiles([
+                "config.json", "judge_config.json", "calibration.json", "tokenizer.json", "tokenizer_config.json",
+                "model.safetensors.index.json", "head.safetensors",
+            ], in: folder)
+            model = .jev(folder: folder)
+        } else {
+            try requireFiles(["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"], in: folder)
+            model = .d1(folder: folder)
+        }
     case (nil, let tokenizerPath?, let weightsPath?):
         let tokenizerURL = URL(fileURLWithPath: tokenizerPath).standardizedFileURL
         let weightsURL = URL(fileURLWithPath: weightsPath).standardizedFileURL
@@ -247,6 +259,10 @@ private func run() async throws {
         engine = try await SystemOneEngine.d1(modelFolder: folder)
         let configuration = try D1Configuration(modelFolder: folder)
         profile = D1ModelProfile(modelID: engine.modelID, maxLength: configuration.maxLength)
+    case .jev(let folder):
+        let backend = try await JevBackend(modelFolder: folder)
+        engine = SystemOneEngine(backend: backend)
+        profile = JevModelProfile(modelID: backend.modelID, maxLength: backend.maxLength)
     case .von(let tokenizerFolder, let weightsFile):
         engine = try await SystemOneEngine.von(
             tokenizerFolder: tokenizerFolder, verifiedWeightsURL: weightsFile)

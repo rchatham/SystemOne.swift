@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "SystemOne", targets: ["SystemOne"]),
         .library(name: "SystemOneVon", targets: ["SystemOneVon"]),
         .library(name: "SystemOneD1", targets: ["SystemOneD1"]),
+        .library(name: "SystemOneJev", targets: ["SystemOneJev"]),
         .library(name: "SystemOneHTTP", targets: ["SystemOneHTTP"]),
         .executable(name: "system-one", targets: ["SystemOneCLI"]),
     ],
@@ -65,6 +66,17 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "SystemOneJev",
+            dependencies: [
+                "SystemOne",
+                .product(name: "Hub", package: "swift-transformers"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "SystemOneHTTP",
             dependencies: [
                 "SystemOne",
@@ -77,7 +89,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "SystemOneCLI",
-            dependencies: ["SystemOne", "SystemOneVon", "SystemOneD1", "SystemOneHTTP"],
+            dependencies: ["SystemOne", "SystemOneVon", "SystemOneD1", "SystemOneJev", "SystemOneHTTP"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
@@ -111,6 +123,15 @@ let package = Package(
             dependencies: [
                 "SystemOne",
                 "SystemOneD1",
+                .product(name: "MLX", package: "mlx-swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "SystemOneJevTests",
+            dependencies: [
+                "SystemOne",
+                "SystemOneJev",
                 .product(name: "MLX", package: "mlx-swift"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
