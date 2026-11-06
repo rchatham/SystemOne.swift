@@ -210,7 +210,11 @@ final class MarkerHeadModel {
         store: any TensorStore, encoder configuration: ModernBERTConfiguration, headLayers: Int, pad: Int,
         dataType: DType = .float32
     ) throws {
-        for specification in Self.schema(encoder: configuration, headLayers: headLayers) where !store.isQuantized(String(specification.name.dropLast(".weight".count))) {
+        // The encoder and the scorer's linears read MLX-quantized weights; the head layers and type embedding load dense.
+        for specification in Self.schema(encoder: configuration, headLayers: headLayers)
+        where !(specification.name.hasPrefix("encoder.") || specification.name.hasPrefix("scorer."))
+            || !store.isQuantized(String(specification.name.dropLast(".weight".count)))
+        {
             let descriptor = try store.requiredTensor(specification.name).descriptor
             guard descriptor.shape == specification.shape else {
                 throw WeightsError.shapeMismatch(name: specification.name, expected: specification.shape, actual: descriptor.shape)
