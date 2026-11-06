@@ -413,10 +413,11 @@ public final class LFM3VLVision {
 
     /// `sample_frames`: `int(frames / fps · rate)` frames, at least
     /// `min_frames` and at most `max_frames` and the clip, spread evenly
-    /// (`np.linspace(0, frames - 1, count).round()`).
+    /// (`np.linspace(0, frames - 1, count).round()`). A vanishing `fps`
+    /// asks for every frame rather than overflowing `Int`.
     public static func sampledFrames(total: Int, fps: Double, video v: LFM3VLVisionConfiguration.Video) -> [Int] {
         guard total > 0 else { return [] }
-        let wanted = Int(Double(total) / fps * v.fps)
+        let wanted = Int(max(0, min(Double(total) / fps * v.fps, Double(total))))
         let count = min(max(wanted, v.minFrames), v.maxFrames, total)
         guard count > 1 else { return [0] }
         let step = Double(total - 1) / Double(count - 1)

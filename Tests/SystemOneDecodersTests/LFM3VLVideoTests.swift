@@ -99,6 +99,8 @@ final class LFM3VLVideoTests: XCTestCase {
         // Too few frames, or no rate, is refused.
         XCTAssertThrowsError(try LFM3VLVision.videoLayout(total: 1, width: 64, height: 64, fps: 2, configuration: c))
         XCTAssertThrowsError(try LFM3VLVision.videoLayout(total: 8, width: 64, height: 64, fps: 0, configuration: c))
+        // A vanishing rate wants more frames than `Int` holds: it takes every frame.
+        XCTAssertEqual(LFM3VLVision.sampledFrames(total: 8, fps: 1e-300, video: try XCTUnwrap(c.video)), Array(0..<8))
     }
 
     /// LFM3-Omni and LFM3-VL time a group differently, which can print other
