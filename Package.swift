@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "SystemOne", targets: ["SystemOne"]),
         .library(name: "SystemOneVon", targets: ["SystemOneVon"]),
         .library(name: "SystemOneD1", targets: ["SystemOneD1"]),
+        .library(name: "SystemOneEncoders", targets: ["SystemOneEncoders"]),
         .library(name: "SystemOneHTTP", targets: ["SystemOneHTTP"]),
         .executable(name: "system-one", targets: ["SystemOneCLI"]),
     ],
@@ -65,6 +66,15 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "SystemOneEncoders",
+            dependencies: [
+                "SystemOne",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "SystemOneHTTP",
             dependencies: [
                 "SystemOne",
@@ -115,6 +125,15 @@ let package = Package(
             dependencies: [
                 "SystemOne",
                 "SystemOneD1",
+                .product(name: "MLX", package: "mlx-swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "SystemOneEncodersTests",
+            dependencies: [
+                "SystemOne",
+                "SystemOneEncoders",
                 .product(name: "MLX", package: "mlx-swift"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
