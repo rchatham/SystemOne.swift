@@ -28,7 +28,7 @@ public struct WireSafetyLimits: Equatable, Sendable {
     public init(
         maximumQuestions: Int = 16,
         maximumPlannedForwards: Int = 24,
-        maximumOptionsPerQuestion: Int = 64,
+        maximumOptionsPerQuestion: Int = 255,
         maximumPlannedMarkers: Int = 256,
         maximumScoreExamplesPerLevel: Int = 256,
         maximumStateUTF8Bytes: Int = 4_096,
@@ -154,10 +154,10 @@ public struct SystemOneWireCodec: Sendable {
         } else {
             type = "choice"
         }
-        guard let instructionsValue = member("instructions", in: question) else {
-            throw invalid("\(path).instructions", "field is required")
-        }
-        let instructions = try string(instructionsValue, path: "\(path).instructions")
+        // Optional, as TypeSafe's schema has it: missing or null is empty, and an
+        // object or array (Decision Index) is its JSON text.
+        let instructions = try member("instructions", in: question)
+            .map { try criterion($0, path: "\(path).instructions") ?? "" } ?? ""
         switch type {
         case "choice":
             guard let criteriaValue = member("criteria", in: question) else {
@@ -167,30 +167,26 @@ public struct SystemOneWireCodec: Sendable {
             guard !criteriaObject.isEmpty else {
                 throw invalid("\(path).criteria", "choice criteria must not be empty")
             }
-            let criteria = try criteriaObject.map { item -> ChoiceOption in
-                switch item.value {
-                case .null: return ChoiceOption(key: item.key)
-                case .string(let description):
-                    return ChoiceOption(key: item.key, description: description)
-                default:
-                    throw invalid(
-                        "\(path).criteria.\(pathComponent(item.key))",
-                        "choice descriptions must be strings or null")
-                }
+            let criteria = try criteriaObject.map { item in
+                ChoiceOption(
+                    key: item.key,
+                    description: try criterion(item.value, path: "\(path).criteria.\(pathComponent(item.key))")
+                )
             }
             return .choice(Choice(instructions: instructions, criteria: criteria))
         case "noul":
-            guard let criteriaValue = member("criteria", in: question) else {
-                return .noul(Noul(instructions: instructions))
-            }
+            let criteriaValue = member("criteria", in: question) ?? .null
             if case .null = criteriaValue {
+                guard !instructions.isEmpty else {
+                    throw invalid("\(path).instructions", "a noul without criteria needs instructions")
+                }
                 return .noul(Noul(instructions: instructions))
             }
             let criteriaObject = try object(criteriaValue, path: "\(path).criteria")
             var positive: String?
             var negative: String?
             for item in criteriaObject {
-                let description = try string(
+                let description = try criterion(
                     item.value, path: "\(path).criteria.\(pathComponent(item.key))")
                 if item.key == "true" { positive = description }
                 if item.key == "false" { negative = description }
@@ -292,7 +288,8 @@ public struct SystemOneWireCodec: Sendable {
                 name: "total instruction UTF-8 bytes"
             )
             try requireAtMost(
-                plan.options.count, safetyLimits.maximumOptionsPerQuestion,
+                plan.options.count,
+                min(safetyLimits.maximumOptionsPerQuestion, profile.maximumOptionsPerQuestion),
                 name: "options per question")
 
             let optionBytes = try plan.options.reduce(0) { partial, option in
@@ -520,6 +517,37 @@ public struct SystemOneWireCodec: Sendable {
             return "{"
                 + (try members.map { member in
                     "\(pythonRepresentation(member.key)): \(try pythonString(member.value, nested: true, path: "\(path).\(pathComponent(member.key))"))"
+                }).joined(separator: ", ") + "}"
+        }
+    }
+
+    /// A criterion or instructions value: a string as is, null as none, and an
+    /// object or array as `json.dumps(value, ensure_ascii=False)`, as decision
+    /// models describe structured criteria. Numbers and booleans are rejected.
+    private func criterion(_ value: OrderedJSON, path: String) throws -> String? {
+        switch value {
+        case .null: return nil
+        case .string(let text): return text
+        case .object, .array: return try jsonText(value, path: path)
+        case .bool, .number: throw invalid(path, "expected a string, object, array, or null")
+        }
+    }
+
+    /// `json.dumps(value, ensure_ascii=False)` with its default separators.
+    private func jsonText(_ value: OrderedJSON, path: String) throws -> String {
+        switch value {
+        case .null: return "null"
+        case .bool(let value): return value ? "true" : "false"
+        case .number(let number): return try pythonNumber(number, path: path)
+        case .string(let text): return PythonSemantics.jsonString(text)
+        case .array(let values):
+            return "["
+                + (try values.enumerated().map { try jsonText($0.element, path: "\(path)[\($0.offset)]") })
+                .joined(separator: ", ") + "]"
+        case .object(let members):
+            return "{"
+                + (try members.map { member in
+                    "\(PythonSemantics.jsonString(member.key)): \(try jsonText(member.value, path: "\(path).\(pathComponent(member.key))"))"
                 }).joined(separator: ", ") + "}"
         }
     }

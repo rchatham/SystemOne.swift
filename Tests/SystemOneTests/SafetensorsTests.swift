@@ -50,6 +50,36 @@ final class SafetensorsTests: XCTestCase {
         XCTAssertEqual(SafetensorsTensorView.float16Bytes([]).count, 0)
     }
 
+    func testDecodesHalfPrecisionAndIntegerDescriptors() throws {
+        let tensors: [TestTensor] = [
+            .halfBits("half", .float16, [5], [0x3C00, 0xC100, 0x7BFF, 0x0001, 0x8000]),
+            .halfBits("brain", .bfloat16, [3], [0x3F80, 0xC020, 0x4049]),
+            .uint32("packed", [2], [1, 0xFFFF_FFFF]),
+            TestTensor(name: "flags", dataType: .bool, shape: [3], bytes: [1, 0, 1]),
+            TestTensor(name: "small", dataType: .int32, shape: [1], bytes: [7, 0, 0, 0]),
+        ]
+        let directory = try makeTemporaryDirectory()
+        let url = directory.appendingPathComponent("mixed.safetensors")
+        try SafetensorsWriter.write(tensors, to: url)
+        let file = try SafetensorsFile(contentsOf: url)
+
+        let half = try XCTUnwrap(file.tensor(named: "half"))
+        XCTAssertEqual(half.descriptor.byteCount, 10)
+        XCTAssertEqual(half.floatValues(), [1, -2.5, 65_504, Float(bitPattern: 0x3380_0000), -0.0])
+        XCTAssertEqual(half.maximumMagnitude(), 65_504)
+        let brain = try XCTUnwrap(file.tensor(named: "brain"))
+        XCTAssertEqual(brain.floatValues(), [1, -2.5, 3.140625])
+        XCTAssertEqual(brain.maximumMagnitude(), 3.140625)
+        XCTAssertEqual(file.descriptors["packed"]?.byteCount, 8)
+        XCTAssertEqual(file.descriptors["flags"]?.byteCount, 3)
+        XCTAssertEqual(file.descriptors["small"]?.dataType, .int32)
+
+        XCTAssertEqual(SafetensorsTensorView.float(fromFloat16: 0x7C00), .infinity)
+        XCTAssertTrue(SafetensorsTensorView.float(fromFloat16: 0x7E00).isNaN)
+        XCTAssertEqual(SafetensorsTensorView.float(fromFloat16: 0x0400), Float(bitPattern: 0x3880_0000))
+        XCTAssertEqual(SafetensorsDataType.allCases.map(\.byteWidth), [8, 4, 2, 2, 8, 4, 2, 1, 8, 4, 2, 1, 1])
+    }
+
     func testMaximumMagnitudeReadsAlignedAndMisalignedPayloads() throws {
         func file(_ values: [Float], headerRemainder: Int) throws -> SafetensorsFile {
             var header = Array(#"{"w":{"dtype":"F32","shape":[\#(values.count)],"data_offsets":[0,\#(values.count * 4)]}}"#.utf8)
@@ -231,8 +261,9 @@ final class SafetensorsTests: XCTestCase {
             "{\"tensor\":{\"dtype\":\"F32\",\"shape\":[1],\"data_offsets\":[0,4],\"extra\":0}}",
             "{\"tensor\":42}",
             "{\"tensor\":{\"dtype\":1,\"shape\":[1],\"data_offsets\":[0,4]}}",
+            "{\"tensor\":{\"dtype\":\"F8_E4M3\",\"shape\":[4],\"data_offsets\":[0,4]}}",
             "{\"tensor\":{\"dtype\":\"BF16\",\"shape\":[1],\"data_offsets\":[0,4]}}",
-            "{\"__metadata__\":null}",
+            "{\"__metadata__\":[]}",
             "{\"__metadata__\":{\"number\":1}}",
         ]
 
@@ -240,6 +271,15 @@ final class SafetensorsTests: XCTestCase {
             let url = try makeFile(header: Array(header.utf8), payload: [0, 0, 0, 0])
             XCTAssertThrowsError(try SafetensorsFile(contentsOf: url), "case \(index)")
         }
+    }
+
+    func testNullMetadataMeansNone() throws {
+        // `mx.save_safetensors` writes `"__metadata__": null` without metadata;
+        // the reference implementation (safetensors 0.8.0) reads it as none.
+        let header = "{\"__metadata__\":null,\"tensor\":{\"dtype\":\"F32\",\"shape\":[1],\"data_offsets\":[0,4]}}"
+        let file = try SafetensorsFile(contentsOf: makeFile(header: Array(header.utf8), payload: [0, 0, 0, 0]))
+        XCTAssertNil(file.metadata)
+        XCTAssertEqual(file.descriptors["tensor"]?.shape, [1])
     }
 
     func testRejectsInvalidShapeNumbersAndCheckedProducts() throws {

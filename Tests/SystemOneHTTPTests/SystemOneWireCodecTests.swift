@@ -199,7 +199,10 @@ final class SystemOneWireCodecTests: XCTestCase {
             #"{"state":"x","questions":{"q":{"type":"score","instructions":"x","criteria":[{"examples":[1]}]}}}"#
         )
         assertRequestError(
-            #"{"state":"x","questions":{"q":{"type":"noul","instructions":"x","criteria":{"other":null}}}}"#
+            #"{"state":"x","questions":{"q":{"type":"noul","instructions":"x","criteria":{"other":1}}}}"#
+        )
+        assertRequestError(
+            #"{"state":"x","questions":{"q":{"type":"choice","instructions":true,"criteria":{"a":null}}}}"#
         )
         XCTAssertThrowsError(
             try codec.decodeRequest(Data(#"{"state":"x","state":"y","questions":{}}"#.utf8))
@@ -287,6 +290,52 @@ final class SystemOneWireCodecTests: XCTestCase {
         XCTAssertThrowsError(try codec.decodeRequest(Data(json.utf8))) {
             XCTAssertEqual($0 as? SystemOneWireCodecError, .safetyLimitExceeded(name: name, limit: limit))
         }
+    }
+
+    func testInstructionsAreOptionalAndStructuredCriteriaBecomeJSONText() throws {
+        let request = try codec.decodeRequest(Data(
+            #"{"state":"x","questions":{"pick":{"criteria":{"a":{"label":"Alpha","tags":["x",1.5,null]},"b":["one","two"],"c":null}},"ok":{"type":"noul","instructions":null,"criteria":{"true":{"means":"yes"}}},"rate":{"type":"score","instructions":{"aspect":"tone"},"criteria":["low","high"]}}}"#
+                .utf8))
+        guard case .choice(let choice) = request.questions[0].question else { return XCTFail("expected choice") }
+        XCTAssertEqual(choice.instructions, "")
+        XCTAssertEqual(choice.criteria, [
+            ChoiceOption(key: "a", description: #"{"label": "Alpha", "tags": ["x", 1.5, null]}"#),
+            ChoiceOption(key: "b", description: #"["one", "two"]"#),
+            ChoiceOption(key: "c"),
+        ])
+        guard case .noul(let noul) = request.questions[1].question else { return XCTFail("expected noul") }
+        XCTAssertEqual(noul.criteria, NoulCriteria(true: #"{"means": "yes"}"#))
+        XCTAssertEqual(request.questions[2].question.instructions, #"{"aspect": "tone"}"#)
+
+        // A noul needs instructions or criteria.
+        assertRequestError(#"{"state":"x","questions":{"q":{"type":"noul"}}}"#)
+        assertRequestError(#"{"state":"x","questions":{"q":{"type":"noul","instructions":"","criteria":null}}}"#)
+    }
+
+    func testOptionCapComesFromTheProfile() throws {
+        let options = (0..<200).map { #""o\#($0)":null"# }.joined(separator: ",")
+        let json = #"{"state":"x","questions":{"q":{"instructions":"x","criteria":{\#(options)}}}}"#
+        let relaxed = WireSafetyLimits(maximumRenderedOptionsUTF8BytesPerQuestion: 16_384)
+        let decoder = SystemOneWireCodec(profile: DecisionModelProfile(modelID: "d3-lite"), safetyLimits: relaxed)
+        XCTAssertEqual(try decoder.decodeRequest(Data(json.utf8)).questions.count, 1)
+        let tooMany = (0..<256).map { #""o\#($0)":null"# }.joined(separator: ",")
+        XCTAssertThrowsError(try decoder.decodeRequest(Data(
+            #"{"state":"x","questions":{"q":{"instructions":"x","criteria":{\#(tooMany)}}}}"#.utf8))) {
+            XCTAssertEqual($0 as? SystemOneWireCodecError, .safetyLimitExceeded(name: "options per question", limit: 255))
+        }
+        XCTAssertThrowsError(try SystemOneWireCodec(profile: D1ModelProfile(), safetyLimits: relaxed).decodeRequest(Data(json.utf8))) {
+            XCTAssertEqual($0 as? SystemOneWireCodecError, .safetyLimitExceeded(name: "options per question", limit: 64))
+        }
+    }
+
+    func testDefaultModelsListingHasBothShapes() throws {
+        let profile = DecisionModelProfile(modelID: "d3-lite", modelDescription: "d3 lite", releaseDate: "2026-10-01")
+        let models = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(profile.modelsJSON.utf8)) as? [String: Any])
+        XCTAssertEqual(models["object"] as? String, "list")
+        XCTAssertEqual((models["data"] as? [[String: String]])?.first?["id"], "d3-lite")
+        let typeSafe = try XCTUnwrap((models["models"] as? [[String: String]])?.first)
+        XCTAssertEqual(typeSafe, ["name": "d3-lite", "description": "d3 lite", "release_date": "2026-10-01"])
+        XCTAssertTrue(D1ModelProfile().modelsJSON.contains(#""release_date":null"#))
     }
 
     func testD1ProfileAdmitsLiteralMarkersAndDescribesItself() throws {

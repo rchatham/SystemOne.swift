@@ -19,9 +19,13 @@ layer against the model's own Python reference with golden test vectors.
 ```
 SystemOne        core: question/answer types, SystemOneEngine, DecisionBackend,
                  bounded microbatching, safetensors + weight schemas, ModelProfile,
-                 torch-exact image resize, Slaney mel filterbank
-SystemOneD1      d1-omni: LFM2.5 trunk, decision head, SigLIP2 vision, FastConformer audio
+                 torch- and Pillow-exact image resize, Slaney mel filterbank
+SystemOneD1      d1-omni: LFM2.5 trunk, decision head, SigLIP2 vision, FastConformer audio;
+                 d1-3B (text and pictures) and d1-2B (text) on the decoder trunks
 SystemOneVon     von: ModernBERT option-marker model and calibration
+SystemOneEncoders shared encoders: config-driven ModernBERT / mmBERT / Ettin
+SystemOneDecoders decoder trunks for decision readouts: Qwen3.5 (Gated DeltaNet + gated attention),
+                 LFM2, LFM3; LFM2-VL pictures (SigLIP2 NaFlex); d3 backends
 SystemOneHTTP    SwiftNIO server for POST /v1/systemone, model-agnostic
 SystemOneChat    chatbot: System One routes every step, a TextGenerator writes the words
 system-one       CLI: `system-one serve`
@@ -94,6 +98,7 @@ so build the CLI with Xcode:
 ```bash
 xcodebuild build -scheme system-one -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/xcode
 .build/xcode/Build/Products/Debug/system-one serve --port 8016 --model-folder weights/d1-omni-600M
+# other backends: --backend d1-3b | d1-2b | d3 | decisiontune | marker | tree, with their own --model-folder
 # von: --tokenizer <folder> --weights <option_marker.safetensors> instead of --model-folder
 ```
 
@@ -104,6 +109,17 @@ bind; `SYSTEMONE_CORS_ORIGINS` is an explicit origin allowlist. The server
 bounds framing, body sizes, concurrency, and deadlines, and the codec bounds the
 work a request may plan using the served model's `ModelProfile` before any
 inference runs. HTTP requests carry text states only.
+
+The request schema follows TypeSafe's:
+- `instructions` is optional. A noul without it needs criteria.
+- Criterion values may be strings, objects, arrays or null. Objects and
+  arrays reach the model as their JSON text.
+- A question may list as many options as the served model allows: 64 for
+  d1-omni and von, 255 for the decoder backends.
+- `GET /v1/models` lists the model in both TypeSafe's `models` shape and
+  OpenAI's `data` shape.
+- A compressed request body (`Content-Encoding: zstd` or any other coding)
+  gets 415, so the client resends it plainly.
 
 ## Chatbot
 
@@ -161,11 +177,12 @@ D1_MODEL_FOLDER=weights/d1-omni-600M swift test --filter SystemOneD1Tests
 xcodebuild build-for-testing -scheme SystemOne-Package -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$PWD/.build/xcode"
 D1_MODEL_FOLDER="$PWD/weights/d1-omni-600M" D1_MODEL_PARITY=1 D1_DEVICE=gpu \
-  xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests \
+  xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests,SystemOneD1Tests.D1HeadTrainingTests \
   "$PWD/.build/xcode/Build/Products/Debug/SystemOneD1Tests.xctest"
 
 # Regenerate or check the d1 fixture (separate venv: torch 2.14, torchvision 0.29.1, transformers 5.17)
 .venv-d1/bin/python tools/d1_golden_capture.py --check
+.venv-d1/bin/python tools/d1_training_capture.py --check   # head gradients
 ```
 
 von's installation, conversion, and parity commands are in
@@ -176,7 +193,10 @@ von's installation, conversion, and parity commands are in
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the shared engine, and how von works
 - [docs/D1.md](docs/D1.md): how d1-omni works and how the port matches it
 - [docs/VON.md](docs/VON.md): von installation and verification record
+- [docs/ENCODERS.md](docs/ENCODERS.md): the shared ModernBERT-family encoder
+- [docs/DECODERS.md](docs/DECODERS.md): the Qwen3.5 decoder trunk, attention plans, and prefix caches
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): microbatching and von benchmarks
+- [docs/MODEL-SURVEY.md](docs/MODEL-SURVEY.md): other System One architectures and models, and a roadmap for adding them
 - [docs/HANDOFF.md](docs/HANDOFF.md): resume-here state
 - [Examples/SystemOneHarness](Examples/SystemOneHarness/README.md): iOS app running d1 on device with camera, photo, and microphone input
 

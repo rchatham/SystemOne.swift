@@ -24,6 +24,13 @@ public final class D1Backend: DecisionBackend {
     /// `model.safetensors`). Pass `artifact: nil` to skip the byte-for-byte pin,
     /// for example when loading a fine-tuned checkpoint. `precision: .float16`
     /// halves weight memory for devices that cannot hold the float32 model.
+    ///
+    /// mlx-vlm exports (`LiquidAI/d1-omni-600M-MLX-fp16`, `-MLX-8bit`) load
+    /// too, recognised by their `model.safetensors.index.json`. No pin is
+    /// recorded for them yet, so the default `artifact` (the PyTorch release's
+    /// pin) does not apply and they are checked against the export schema
+    /// instead; pass their pin explicitly to verify them byte for byte. They
+    /// are float16, so `precision: .float16` keeps their memory footprint.
     public convenience init(
         modelFolder: URL,
         modelID: String = "d1-omni-600M",
@@ -32,15 +39,13 @@ public final class D1Backend: DecisionBackend {
     ) async throws {
         let configuration = try D1Configuration(modelFolder: modelFolder)
         let tokenizer = try await D1Tokenizer(modelFolder: modelFolder)
-        let url = modelFolder.appendingPathComponent("model.safetensors")
-        let weights = try artifact.map {
-            try D1Weights(contentsOf: url, pinnedTo: $0, configuration: configuration, precision: precision)
-        } ?? D1Weights(contentsOf: url, configuration: configuration, precision: precision)
         self.init(
             modelID: modelID,
             configuration: configuration,
             tokenizer: tokenizer,
-            model: try D1Model(weights: weights),
+            model: try D1Model(weights: D1Weights(
+                modelFolder: modelFolder, configuration: configuration, artifact: artifact, precision: precision
+            )),
             logitsProvider: nil
         )
     }
@@ -105,9 +110,18 @@ public final class D1Backend: DecisionBackend {
         return DecisionPlan(rows: rows, decisions: decisions, usage: Usage(inputTokens: read, outputTokens: 0))
     }
 
-    // d1 currently uses the shared `microbatches(for:strategy:)` default (a
-    // padded-attention bound). The reference `_run` batches by a flat token
-    // budget instead; see `microbatches(for:strategy:)` below once overridden.
+    /// The shared padded-attention bound, costing each row's own text against
+    /// the media prefix it reads: a request's rows share one prefix whose trunk
+    /// states run once, so a row of `T` tokens costs `T × (P + T)`.
+    public func microbatches(for rows: [D1Row], strategy: BatchingStrategy) -> [[Int]] {
+        let prefix = rows.first?.prefix
+        precondition(rows.allSatisfy { $0.prefix === prefix }, "a plan's rows share one media prefix")
+        return SystemOneEngine.microbatchIndices(
+            sequenceLengths: rows.map(\.computedLength),
+            sharedPrefixLength: prefix?.length ?? 0,
+            maxAmplification: strategy.maxAmplification
+        )
+    }
 
     public func logits(for rows: [D1Row]) async throws -> BatchLogitsOutput {
         let perRow: [[Float]]
