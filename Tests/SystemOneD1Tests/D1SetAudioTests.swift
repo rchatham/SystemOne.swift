@@ -26,6 +26,8 @@ private struct D1SetAudioFixture: Decodable {
     struct Request: Decodable {
         let clip: String?
         let picture: String?
+        /// Spoken questions' clips by question id.
+        let voices: [String: String]
         let rows: [Row]
         let tokens: Int
         let answers: [Reference]
@@ -105,9 +107,16 @@ private struct D1SetAudioFixture: Decodable {
         return RGBImage(width: width, height: height, pixels: pixels)
     }
 
-    func media(_ request: Request) -> SystemOneMedia {
+    func media(_ request: Request) -> SystemOneMedia? {
         if let clip = request.clip { return .audio(Self.clip(clips[clip]!.source)) }
-        return .images([Self.synthetic(pictures[request.picture!]!)])
+        return request.picture.map { .images([Self.synthetic(pictures[$0]!)]) }
+    }
+
+    /// `request` with its spoken questions' clips attached.
+    func speaking(_ request: SystemOneRequest, _ reference: Request) -> SystemOneRequest {
+        SystemOneRequest(model: request.model, state: request.state, questions: request.questions.map { entry in
+            QuestionEntry(id: entry.id, question: entry.question, spoken: reference.voices[entry.id].map { Self.clip(clips[$0]!.source) })
+        })
     }
 }
 
@@ -171,6 +180,23 @@ private enum D1SetAudioRequests {
         SystemOneRequest(state: .text("A photo of the shelf <|image|> here."), questions: [
             QuestionEntry(id: "stocked", question: .noul(Noul(instructions: "Is the shelf stocked?"))),
         ]),
+        // Spoken questions (empty instructions; `speaking` attaches their clips).
+        SystemOneRequest(state: .text("Order 1234 arrived broken."), questions: [
+            QuestionEntry(id: "claim", question: .noul(Noul(instructions: ""))),
+            QuestionEntry(id: "channel", question: .choice(Choice(instructions: "How did they reach us?", criteria: [
+                ChoiceOption(key: "email"), ChoiceOption(key: "phone", description: "Phone call"),
+            ]))),
+            QuestionEntry(id: "anger", question: .score(Score(instructions: "", criteria: [.text("calm"), .text("upset")]))),
+        ]),
+        SystemOneRequest(state: .text("Caller <|audio|> says:"), questions: [
+            QuestionEntry(id: "intent", question: .choice(Choice(instructions: "", criteria: [
+                ChoiceOption(key: "cancel", description: "Cancel the plan"), ChoiceOption(key: "upgrade"),
+            ]))),
+            QuestionEntry(id: "vip", question: .noul(Noul(instructions: "Is the caller a VIP?"))),
+        ]),
+        SystemOneRequest(state: .text("A photo of the shelf."), questions: [
+            QuestionEntry(id: "empty", question: .noul(Noul(instructions: ""))),
+        ]),
     ]
 }
 
@@ -190,22 +216,67 @@ final class D1SetAudioTests: XCTestCase {
         XCTAssertEqual(fixture.requests.count, D1SetAudioRequests.requests.count)
         for (request, reference) in zip(D1SetAudioRequests.requests, fixture.requests) {
             let media = fixture.media(reference)
-            let plan = try backend.plan(request, media: media)
+            let plan = try backend.plan(fixture.speaking(request, reference), media: media)
             XCTAssertEqual(plan.rows.map(\.ids), reference.rows.map(\.ids))
             XCTAssertEqual(plan.rows.map(\.stateLength), reference.rows.map(\.state))
             XCTAssertEqual(plan.rows.map(\.questions), reference.rows.map(\.question))
             XCTAssertEqual(plan.rows.map(\.ends), reference.rows.map(\.ends))
             XCTAssertEqual(plan.usage.inputTokens, reference.tokens)
             for row in plan.rows {
-                if case .audio(let clip) = media {
+                switch media {
+                case .audio(let clip)?:
                     XCTAssertEqual(row.audio, clip)
                     XCTAssertTrue(row.images.isEmpty)
-                } else {
+                case .images?:
                     XCTAssertNil(row.audio)
                     XCTAssertEqual(row.images.count, 1)
+                case nil:
+                    XCTAssertNil(row.audio)
+                    XCTAssertTrue(row.images.isEmpty)
                 }
             }
+            // Each row carries its own spoken questions' clips, in question order.
+            let voices = plan.rows.flatMap(\.voices)
+            XCTAssertEqual(voices, request.questions.compactMap { reference.voices[$0.id].map { D1SetAudioFixture.clip(fixture.clips[$0]!.source) } })
         }
+    }
+
+    func testSpokenQuestionsNeedAnEarAndNoWrittenInstructions() async throws {
+        let fixture = try D1SetAudioFixture.load()
+        let clip = D1SetAudioFixture.clip(fixture.clips["ask"]!.source)
+        let spoken = SystemOneRequest(state: .text("A ticket."), questions: [
+            QuestionEntry(id: "urgent", question: .noul(Noul(instructions: "")), spoken: clip),
+        ])
+        XCTAssertNoThrow(try planner(fixture).plan(spoken, media: nil))
+        XCTAssertTrue(try planner(fixture).hearsSpokenQuestions)
+
+        // Written instructions next to a clip are refused rather than ignored.
+        let both = SystemOneRequest(state: .text("A ticket."), questions: [
+            QuestionEntry(id: "urgent", question: .noul(Noul(instructions: "Is it urgent?")), spoken: clip),
+        ])
+        XCTAssertThrowsError(try planner(fixture).plan(both, media: nil)) { error in
+            guard case .invalidQuestion(let id, _)? = error as? SystemOneEngineError else { return XCTFail("\(error)") }
+            XCTAssertEqual(id, "urgent")
+        }
+
+        // A backend without an audio encoder, through the engine, refuses before planning.
+        let deaf = D1SetBackend(
+            modelID: "d1-2b", configuration: fixture.configuration,
+            tokenizer: AudioAddedTokenizer(added: fixture.added, words: fixture.words), trunk: nil,
+            visionConfiguration: try LFM3VLVisionConfiguration(modelFolder: D1SetAudioFixture.folder)
+        )
+        XCTAssertFalse(deaf.hearsSpokenQuestions)
+        XCTAssertThrowsError(try deaf.plan(spoken, media: nil))
+        do {
+            _ = try await SystemOneEngine(backend: deaf).systemOne(spoken)
+            XCTFail("a spoken question reached a backend that cannot hear it")
+        } catch {
+            XCTAssertEqual(error as? SystemOneEngineError, .unsupportedMedia(model: "d1-2b"))
+        }
+
+        // The wire format carries no audio.
+        XCTAssertThrowsError(try JSONEncoder().encode(spoken))
+        XCTAssertNoThrow(try JSONEncoder().encode(D1SetAudioRequests.requests[0]))
     }
 
     func testReadsTheOmniCheckpointAndRejectsAudioElsewhere() throws {
@@ -254,7 +325,7 @@ final class D1SetAudioRuntimeTests: XCTestCase {
             for folder in [D1SetAudioFixture.folder, D1SetAudioFixture.folder.appendingPathComponent("mlx")] {
                 let backend = try backend(fixture, folder: folder)
                 for (request, reference) in zip(D1SetAudioRequests.requests, fixture.requests) {
-                    let plan = try backend.plan(request, media: fixture.media(reference))
+                    let plan = try backend.plan(fixture.speaking(request, reference), media: fixture.media(reference))
                     let logits = try backend.optionLogits(for: plan.rows)
                     for (decision, expected) in zip(plan.decisions, reference.answers) {
                         let answer = try decision.resolve(decision.rowIndices.map { logits[$0] })
@@ -286,9 +357,13 @@ final class D1SetAudioRuntimeTests: XCTestCase {
             let heard = try backend.plan(D1SetAudioRequests.requests[1], media: fixture.media(fixture.requests[1]))
             let seen = try backend.plan(D1SetAudioRequests.requests[4], media: fixture.media(fixture.requests[4]))
             let text = try backend.plan(D1SetAudioRequests.requests[3], media: nil)
+            // A picture state with a spoken question: image and audio tokens in one row.
+            let asked = try backend.plan(
+                fixture.speaking(D1SetAudioRequests.requests[7], fixture.requests[7]), media: fixture.media(fixture.requests[7])
+            )
             let apart = try backend.optionLogits(for: heard.rows) + backend.optionLogits(for: seen.rows)
-                + backend.optionLogits(for: text.rows)
-            let together = try backend.optionLogits(for: heard.rows + seen.rows + text.rows)
+                + backend.optionLogits(for: text.rows) + backend.optionLogits(for: asked.rows)
+            let together = try backend.optionLogits(for: heard.rows + seen.rows + text.rows + asked.rows)
             XCTAssertEqual(together.count, apart.count)
             for (joined, alone) in zip(together, apart) {
                 XCTAssertEqual(joined.count, alone.count)

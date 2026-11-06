@@ -8,6 +8,18 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Added
 
+- d1-Omni-2B spoken questions: `QuestionEntry.spoken` attaches a clip that
+  takes the place of a question's instructions.
+  - `D1SetBackend` writes the clip's `<|audio|>` markup where the
+    instructions would be and fills it with the clip's features, as d1's
+    `media.py` places a spoken question.
+  - `DecisionBackend.hearsSpokenQuestions` (default `false`) lets
+    `SystemOneEngine` refuse spoken questions for backends that cannot hear
+    them. Encoding a request with a spoken question throws, since the wire
+    format carries no audio.
+  - `DecoderFeatures` fills several placeholder tokens per row (`tokens:` and
+    a dictionary per row), so a picture state and spoken questions share one
+    row.
 - d1-Omni-2B audio: `D1SetBackend` takes `SystemOneMedia.audio` when the
   checkpoint has an `audio_encoder_config`.
   - Clips are resampled to 16 kHz as d1's `media.py` does (new

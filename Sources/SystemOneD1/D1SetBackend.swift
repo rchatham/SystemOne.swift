@@ -120,6 +120,8 @@ public enum D1SetPrompt {
     static let breakCharacter: Unicode.Scalar = "\u{200B}"
     static let lead = "<think></think>"
     public static let header = "QUESTION:\n"
+    /// A spoken question's place in its suffix until its clip's markup replaces it (`media.SPOKEN`).
+    static let spokenPlaceholder = "\u{E000}"
 
     /// `plain`: every special token's text in `text` gets U+200B after its
     /// first character (longest name first, again until none is left), so it
@@ -161,16 +163,30 @@ public enum D1SetPrompt {
             + plain(D1ChatPrompt.stateBlock(state), specialTokens: configuration.specialTokens) + "\n" + header
     }
 
-    /// The question and the assistant header up to the answer slot.
-    public static func suffix(question: Question, codes: [String], configuration: D1SetConfiguration) -> String {
-        plain(D1ChatPrompt.questionBlock(question, codes: codes), specialTokens: configuration.specialTokens)
-            + "<|im_end|>\n<|im_start|>assistant\n" + lead
+    /// The question and the assistant header up to the answer slot. A spoken
+    /// question's `spoken` markup (not escaped) sits where its instructions would.
+    public static func suffix(
+        question: Question, codes: [String], configuration: D1SetConfiguration, spoken: String? = nil
+    ) -> String {
+        guard let spoken else {
+            return plain(D1ChatPrompt.questionBlock(question, codes: codes), specialTokens: configuration.specialTokens)
+                + "<|im_end|>\n<|im_start|>assistant\n" + lead
+        }
+        return suffix(question: question.withInstructions(spokenPlaceholder), codes: codes, configuration: configuration)
+            .replacingOccurrences(of: spokenPlaceholder, with: spoken)
     }
 
-    /// `check_question` for noul, choice, and score.
-    static func validate(_ question: Question) -> String? {
-        guard !PythonSemantics.pythonStrip(question.instructions).isEmpty else {
-            return "\"instructions\" is the question as text"
+    /// `check_question` for noul, choice, and score. A spoken question's clip
+    /// takes the place of its instructions, which stay empty.
+    static func validate(_ question: Question, spoken: Bool = false) -> String? {
+        if spoken {
+            guard question.instructions.isEmpty else {
+                return "a spoken question's clip is its instructions; leave \"instructions\" empty"
+            }
+        } else {
+            guard !PythonSemantics.pythonStrip(question.instructions).isEmpty else {
+                return "\"instructions\" is the question as text"
+            }
         }
         if case .score(let score) = question {
             guard (2...10).contains(score.criteria.count), score.criteria.allSatisfy({ if case .text = $0 { return true }; return false }) else {
@@ -228,6 +244,9 @@ public struct D1SetRow: PlannedRow, Equatable, Sendable {
     public let images: [RGBImage]
     /// The clip whose features fill the state's `<|audio|>` tokens.
     public let audio: AudioClip?
+    /// The clips of the row's spoken questions, in question order; their
+    /// features fill the `<|audio|>` tokens after the state's.
+    public let voices: [AudioClip]
 
     public var sequenceLength: Int { ids.count }
     public var logitCount: Int { groups.reduce(0) { $0 + $1.count } }
@@ -255,8 +274,10 @@ public struct D1SetRow: PlannedRow, Equatable, Sendable {
 /// (`SystemOneMedia.audio`) is resampled to 16 kHz, written before the state
 /// as `<|vision_start|><|audio|>…<|vision_end|>`, and encoded once by
 /// LFM3-Omni's audio encoder; its features fill the `<|audio|>` tokens.
-/// Video, spoken questions, and the typed questions (multiple choice,
-/// extraction, estimates, boxes) are not supported yet.
+/// A spoken question (`QuestionEntry.spoken`) has its clip's markup where its
+/// instructions would be, and its features fill those `<|audio|>` tokens.
+/// Video, a spoken state with no text, and the typed questions (multiple
+/// choice, extraction, estimates, boxes) are not supported yet.
 public final class D1SetBackend: DecisionBackend {
     public let modelID: String
     public let configuration: D1SetConfiguration
@@ -311,6 +332,9 @@ public final class D1SetBackend: DecisionBackend {
         self.audio = audio
     }
 
+    /// A checkpoint with an audio encoder (d1-Omni-2B) hears spoken questions.
+    public var hearsSpokenQuestions: Bool { audioConfiguration != nil }
+
     public func plan(_ request: SystemOneRequest, media: SystemOneMedia?) throws -> DecisionPlan<D1SetRow> {
         var images: [RGBImage] = []
         var clip: AudioClip?
@@ -334,16 +358,29 @@ public final class D1SetBackend: DecisionBackend {
             markup = LFM3AudioEncoder.markup(featureCount: placeholders)
             clip = value
         }
+        let stateAudio = placeholders
         var suffixes: [String] = []
         var readouts: [[[Int]]] = []
+        // Per question: its clip's `<|audio|>` count, 0 when written.
+        var voiceCounts: [Int] = []
         for entry in request.questions {
-            if let reason = D1SetPrompt.validate(entry.question) {
+            if let reason = D1SetPrompt.validate(entry.question, spoken: entry.spoken != nil) {
                 throw SystemOneEngineError.invalidQuestion(id: entry.id, reason: reason)
             }
+            var voice: String?
+            var voiceCount = 0
+            if let spoken = entry.spoken {
+                guard let settings = audioConfiguration else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+                voiceCount = try LFM3AudioEncoder.featureCount(of: spoken, configuration: settings)
+                voice = LFM3AudioEncoder.markup(featureCount: voiceCount)
+            }
+            voiceCounts.append(voiceCount)
             do {
                 let readout = try D1ChatPrompt.readout(entry.question, tokenizer: tokenizer, scheme: configuration.codeScheme)
                 readouts.append(readout.groups)
-                suffixes.append(D1SetPrompt.suffix(question: entry.question, codes: readout.codes, configuration: configuration))
+                suffixes.append(D1SetPrompt.suffix(
+                    question: entry.question, codes: readout.codes, configuration: configuration, spoken: voice
+                ))
             } catch let error as D1ChatError {
                 throw SystemOneEngineError.invalidQuestion(id: entry.id, reason: error.localizedDescription)
             }
@@ -372,10 +409,12 @@ public final class D1SetBackend: DecisionBackend {
                     throw D1ChatError.imagePlaceholders(expected: placeholders, found: found)
                 }
             }
-            if let token = audioConfiguration?.audioTokenID, clip != nil {
+            // The state's clip, then each spoken question's, in row order.
+            let heard = (clip == nil ? 0 : stateAudio) + members.reduce(0) { $0 + voiceCounts[$1] }
+            if let token = audioConfiguration?.audioTokenID, heard > 0 {
                 let found = ids.filter { $0 == token }.count
-                guard found == placeholders else {
-                    throw D1ChatError.audioPlaceholders(expected: placeholders, found: found)
+                guard found == heard else {
+                    throw D1ChatError.audioPlaceholders(expected: heard, found: found)
                 }
             }
             var logitOffset = 0
@@ -395,7 +434,8 @@ public final class D1SetBackend: DecisionBackend {
             }
             rows.append(D1SetRow(
                 ids: ids, stateLength: stateLength, questions: questions, ends: ends,
-                groups: members.map { readouts[$0] }, images: images, audio: clip
+                groups: members.map { readouts[$0] }, images: images, audio: clip,
+                voices: members.compactMap { request.questions[$0].spoken }
             ))
         }
         return DecisionPlan(rows: rows, decisions: decisions, usage: Usage(inputTokens: rows.reduce(0) { $0 + $1.ids.count }))
@@ -437,48 +477,41 @@ public final class D1SetBackend: DecisionBackend {
     /// Each row's media features, every picture set or clip encoded once;
     /// `nil` when no row has media.
     private func mediaFeatures(_ rows: [D1SetRow]) throws -> DecoderFeatures? {
-        let media = rows.map { row -> Media? in
-            if let clip = row.audio { return .audio(clip) }
-            return row.images.isEmpty ? nil : .images(row.images)
-        }
-        guard media.contains(where: { $0 != nil }) else { return nil }
+        guard rows.contains(where: { !$0.images.isEmpty || $0.audio != nil || !$0.voices.isEmpty }) else { return nil }
+        let imageToken = visionConfiguration?.imageTokenID
+        let audioToken = audioConfiguration?.audioTokenID
         var encoded: [(media: Media, features: MLXArray)] = []
-        var features: [MLXArray?] = []
-        var tokens: [Int] = []
-        for item in media {
-            guard let item else {
-                features.append(nil)
-                tokens.append(visionConfiguration?.imageTokenID ?? audioConfiguration?.audioTokenID ?? -1)
-                continue
-            }
-            tokens.append(try placeholderToken(item))
-            if let known = encoded.first(where: { $0.media == item }) {
-                features.append(known.features)
-                continue
-            }
-            let value = try encode(item)
-            encoded.append((media: item, features: value))
-            features.append(value)
+        func features(_ media: Media, cached: Bool) throws -> MLXArray {
+            if let known = encoded.first(where: { $0.media == media }) { return known.features }
+            let value = try encode(media, cached: cached)
+            encoded.append((media: media, features: value))
+            return value
         }
-        return DecoderFeatures(tokens: tokens, rows: features)
+        let placed = try rows.map { row -> [Int: MLXArray] in
+            var filled: [Int: MLXArray] = [:]
+            if !row.images.isEmpty {
+                guard let imageToken else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+                filled[imageToken] = try features(.images(row.images), cached: true)
+            }
+            // The state's clip, then each spoken question's: the order their `<|audio|>` tokens run.
+            var heard = try row.audio.map { [try features(.audio($0), cached: true)] } ?? []
+            heard += try row.voices.map { try features(.audio($0), cached: false) }
+            if !heard.isEmpty {
+                guard let audioToken else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+                filled[audioToken] = heard.count == 1 ? heard[0] : concatenated(heard, axis: 0)
+            }
+            return filled
+        }
+        return DecoderFeatures(tokens: [imageToken, audioToken].compactMap { $0 }, rows: placed)
     }
 
-    private func placeholderToken(_ media: Media) throws -> Int {
-        switch media {
-        case .images:
-            guard let token = visionConfiguration?.imageTokenID else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
-            return token
-        case .audio:
-            guard let token = audioConfiguration?.audioTokenID else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
-            return token
-        }
-    }
-
-    /// `media`'s features (pictures one after another), reusing the last media encoded.
-    private func encode(_ media: Media) throws -> MLXArray {
+    /// `media`'s features (pictures one after another). A request's state
+    /// media (`cached`) is kept for its next microbatch; a spoken question's
+    /// clip sits in one row only.
+    private func encode(_ media: Media, cached: Bool) throws -> MLXArray {
         lock.lock()
         defer { lock.unlock() }
-        if let cached = featureCache, cached.media == media { return cached.features }
+        if let known = featureCache, known.media == media { return known.features }
         let value: MLXArray
         switch media {
         case .images(let images):
@@ -489,8 +522,19 @@ public final class D1SetBackend: DecisionBackend {
             guard let audio else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
             value = try audio(clip)
         }
-        featureCache = (media: media, features: value)
+        if cached { featureCache = (media: media, features: value) }
         return value
+    }
+}
+
+extension Question {
+    /// The same question with other instructions.
+    func withInstructions(_ instructions: String) -> Question {
+        switch self {
+        case .choice(let choice): return .choice(Choice(instructions: instructions, criteria: choice.criteria))
+        case .noul(let noul): return .noul(Noul(instructions: instructions, criteria: noul.criteria))
+        case .score(let score): return .score(Score(instructions: instructions, criteria: score.criteria))
+        }
     }
 }
 

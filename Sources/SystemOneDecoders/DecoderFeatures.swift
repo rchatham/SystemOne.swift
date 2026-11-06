@@ -2,23 +2,26 @@ import Foundation
 import MLX
 import MLXNN
 
-/// Embeddings that stand in for a placeholder token's: each row's placeholder
-/// positions take that row's feature rows in order, as transformers'
-/// `masked_scatter` of image or audio features does. A row with no
-/// placeholders takes `nil`.
+/// Embeddings that stand in for placeholder tokens': in each row, a
+/// placeholder token's positions take that row's feature rows for it in order,
+/// as transformers' `masked_scatter` of image or audio features does. A row
+/// may fill several placeholder tokens (a picture state and a spoken
+/// question), or none.
 public struct DecoderFeatures {
-    /// Per decoder row: the placeholder token id (an image or audio token).
+    /// The placeholder token ids. In every row, each one's positions must
+    /// match its feature rows, none when the row has no features for it.
     public let tokens: [Int]
-    /// Per decoder row: `[placeholders, hidden]` features, or `nil`.
-    public let rows: [MLXArray?]
+    /// Per decoder row: `[placeholders, hidden]` features for each placeholder token it fills.
+    public let rows: [[Int: MLXArray]]
 
-    /// One placeholder token for every row.
+    /// One placeholder token for every row; a row without placeholders takes `nil`.
     public init(token: Int, rows: [MLXArray?]) {
-        self.init(tokens: Array(repeating: token, count: rows.count), rows: rows)
+        self.init(tokens: [token], rows: rows.map { $0.map { [token: $0] } ?? [:] })
     }
 
-    /// A placeholder token per row: a batch may mix pictures and audio clips.
-    public init(tokens: [Int], rows: [MLXArray?]) {
+    /// Several placeholder tokens: a batch may mix pictures, audio clips and
+    /// text, and one row may hold both pictures and speech.
+    public init(tokens: [Int], rows: [[Int: MLXArray]]) {
         self.tokens = tokens
         self.rows = rows
     }
@@ -32,7 +35,7 @@ extension DecoderBatch {
         let rows = ids.count
         let tokens = embedding(MLXArray(ids.flatMap { $0.map(Int32.init) }, [rows, width]))
         guard let features else { return tokens }
-        guard features.rows.count == rows, features.tokens.count == rows else {
+        guard features.rows.count == rows else {
             throw DecoderError.featureCount(row: min(rows, features.rows.count), placeholders: 0, features: 0)
         }
         let hidden = tokens.dim(-1)
@@ -42,18 +45,24 @@ extension DecoderBatch {
         var parts = [tokens.reshaped(rows * width, hidden)]
         var next = rows * width
         for (row, tokenRow) in ids.enumerated() {
-            let slots = tokenRow.indices.filter { tokenRow[$0] == features.tokens[row] }
-            let count = features.rows[row].map { $0.ndim == 2 ? $0.dim(0) : -1 } ?? 0
-            guard count == slots.count else {
-                throw DecoderError.featureCount(row: row, placeholders: slots.count, features: count)
+            let filled = features.rows[row]
+            if let stray = filled.keys.first(where: { !features.tokens.contains($0) }) {
+                throw DecoderError.featureCount(row: row, placeholders: 0, features: filled[stray]?.dim(0) ?? 0)
             }
-            guard let values = features.rows[row], count > 0 else { continue }
-            guard values.dim(1) == hidden else {
-                throw DecoderError.featureCount(row: row, placeholders: slots.count, features: count)
+            for token in features.tokens {
+                let slots = tokenRow.indices.filter { tokenRow[$0] == token }
+                let count = filled[token].map { $0.ndim == 2 ? $0.dim(0) : -1 } ?? 0
+                guard count == slots.count else {
+                    throw DecoderError.featureCount(row: row, placeholders: slots.count, features: count)
+                }
+                guard let values = filled[token], count > 0 else { continue }
+                guard values.dim(1) == hidden else {
+                    throw DecoderError.featureCount(row: row, placeholders: slots.count, features: count)
+                }
+                for (offset, slot) in slots.enumerated() { sources[row * width + slot] = Int32(next + offset) }
+                parts.append(values.asType(tokens.dtype))
+                next += count
             }
-            for (offset, slot) in slots.enumerated() { sources[row * width + slot] = Int32(next + offset) }
-            parts.append(values.asType(tokens.dtype))
-            next += count
         }
         guard parts.count > 1 else { return tokens }
         return concatenated(parts, axis: 0).take(MLXArray(sources), axis: 0).reshaped(rows, width, hidden)

@@ -22,7 +22,11 @@ trunk and vision tower are testdata/d1_2b_vision_tiny's.
   transformers' names (`lin_out` stored as a width-1 Conv1d); mlx/: mlx-vlm's names.
 - fixture.json: per synthetic clip (16-bit PCM from an integer formula), its
   resampled samples and log-mel features (summaries), and its projected features;
-  per request, the packed rows and answers.
+  per request, its spoken questions' clips, the packed rows and answers.
+
+A spoken question's instructions are its clip: `suffix_layout` writes `media.SPOKEN`
+in their place, `Reader.place` swaps in the clip's markup, and the engine fills each
+row's `<|audio|>` tokens with the state's clip, then the row's spoken questions'.
 
     .venv/bin/pip install "torch==2.15.0" "transformers==5.22.1" "mlx==0.32.4" "mlx-vlm==0.7.11" safetensors numpy
     .venv/bin/python tools/d1_omni_2b_audio_fixture.py
@@ -46,6 +50,7 @@ from mlx_vlm.models import d1_lfm3_omni
 from mlx_vlm.models.d1_lfm3_vl import media as d1_media
 from mlx_vlm.models.d1_lfm3_vl.api import answer
 from mlx_vlm.models.d1_lfm3_vl.d1 import LEAD, pack_set
+from mlx_vlm.models.d1_lfm3_vl.media import SPOKEN
 from mlx_vlm.models.d1_lfm3_vl.prompt import (
     DEFAULT_STATE_STYLE,
     DEFAULT_SYSTEM,
@@ -103,8 +108,10 @@ DEPTH = {
     "sliding_window": 256, "tie_word_embeddings": True, "use_sandwich_norm": False, "vocab_size": 1,
 }
 
-# name: (sample rate, samples, salt). `short` is under one window; `call` and `phone` are resampled.
-CLIPS = {"short": (16000, 300, 3), "speech": (16000, 9000, 5), "call": (22050, 26000, 7), "phone": (8000, 7000, 11)}
+# name: (sample rate, samples, salt). `short` is under one window; `call`, `phone` and `ask2` are resampled.
+# `ask` and `ask2` are spoken questions.
+CLIPS = {"short": (16000, 300, 3), "speech": (16000, 9000, 5), "call": (22050, 26000, 7), "phone": (8000, 7000, 11),
+         "ask": (16000, 4000, 13), "ask2": (11025, 5000, 17)}
 REQUESTS = [
     ("Caller says <|audio|> twice.", "call", None, [
         ("refund", {"type": "noul", "instructions": "Does the caller want a refund?"}),
@@ -124,6 +131,21 @@ REQUESTS = [
     ]),
     ("A photo of the shelf <|image|> here.", None, "small", [
         ("stocked", {"type": "noul", "instructions": "Is the shelf stocked?"}),
+    ]),
+    # Spoken questions: their clip's markup sits where their instructions would.
+    ("Order 1234 arrived broken.", None, None, [
+        ("claim", {"type": "noul", "instructions": {"spoken": "ask"}}),
+        ("channel", {"type": "choice", "instructions": "How did they reach us?",
+                     "criteria": {"email": None, "phone": "Phone call"}}),
+        ("anger", {"type": "score", "instructions": {"spoken": "ask2"}, "criteria": ["calm", "upset"]}),
+    ]),
+    ("Caller <|audio|> says:", "call", None, [
+        ("intent", {"type": "choice", "instructions": {"spoken": "ask"},
+                    "criteria": {"cancel": "Cancel the plan", "upgrade": None}}),
+        ("vip", {"type": "noul", "instructions": "Is the caller a VIP?"}),
+    ]),
+    ("A photo of the shelf.", None, "small", [
+        ("empty", {"type": "noul", "instructions": {"spoken": "ask2"}}),
     ]),
 ]
 PICTURES = {"small": (200, 150, 21)}
@@ -302,10 +324,10 @@ def main():
     model.load_weights(list(sanitized.items()), strict=False)
     model.eval()
 
-    clips, encoded = {}, {}
+    clips, encoded, waves = {}, {}, {}
     for name, (rate, count, salt) in CLIPS.items():
         source = np.array(pcm(count, salt), np.float32) / 32768
-        wave = resampled(source, rate, 16000)
+        wave = waves[name] = resampled(source, rate, 16000)
         port = d1_media.resampled(source, rate, 16000)
         assert len(port) == len(wave) and np.abs(port - wave).max() < 1e-5, name
         mel = features_of(wave)
@@ -327,28 +349,41 @@ def main():
         pictures[name] = model.encode_images(mx.array(pixels), image_grid_thw=mx.array([grid]))
 
     requests = []
+    def spoken_markup(name):
+        return f"<|vision_start|>{'<|audio|>' * encoded[name].shape[0]}<|vision_end|>"
+
     for state, clip, picture, named in REQUESTS:
+        voices = {n: q["instructions"]["spoken"] for n, q in named if isinstance(q["instructions"], dict)}
+        named = [(n, {**q, "instructions": {"type": "audio", "audio": waves[voices[n]], "sampling_rate": 16000}})
+                 if n in voices else (n, q) for n, q in named]
         for _, q in named:
             check_question(q)
         questions = [as_question(q) for _, q in named]
         if clip is not None:
-            token, features = AUDIO, encoded[clip]
-            markup = f"<|vision_start|>{'<|audio|>' * features.shape[0]}<|vision_end|>"
+            state_media = [(AUDIO, encoded[clip])]
+            markup = spoken_markup(clip)
+        elif picture is not None:
+            state_media = [(VISION_TOKENS["<|image|>"], pictures[picture])]
+            markup = f"<|vision_start|>{'<|image|>' * pictures[picture].shape[0]}<|vision_end|>"
         else:
-            token, features = VISION_TOKENS["<|image|>"], pictures[picture]
-            markup = f"<|vision_start|>{'<|image|>' * features.shape[0]}<|vision_end|>"
+            state_media, markup = [], ""
         prefix = prefix_text(tokenizer, state, tokenizer.bos_token, DEFAULT_STATE_STYLE, DEFAULT_SYSTEM, markup)
         layouts = [suffix_layout(tokenizer, q, LEAD) for q in questions]
+        # media.Reader.place: a spoken question's markup in place of SPOKEN.
+        texts = [text.replace(SPOKEN, spoken_markup(voices[n])) if n in voices else text
+                 for (text, _), (n, _) in zip(layouts, named)]
         header = question_header(tokenizer, state)
         rows, answers, read = [], [], 0
         for k0 in range(0, len(questions), SET_SIZE):
             group = questions[k0:k0 + SET_SIZE]
-            suffixes = [s for s, _ in layouts[k0:k0 + SET_SIZE]]
+            suffixes = texts[k0:k0 + SET_SIZE]
             ids, state_len, question, ends = pack_set(
                 tokenizer, prefix, suffixes, header, [o for _, o in layouts[k0:k0 + SET_SIZE]],
                 tokenizer.encode(prefix + suffixes[0], add_special_tokens=False))
             read += len(ids)
-            hidden = model.d1_hidden(ids, state_len, question, [(token, features)])
+            # The engine's row media: the state's, then each spoken question's, in row order.
+            row_media = state_media + [(AUDIO, encoded[voices[n]]) for n, _ in named[k0:k0 + SET_SIZE] if n in voices]
+            hidden = model.d1_hidden(ids, state_len, question, row_media)
             embed = model.language_model.model.embed_tokens
             for q, slots in zip(group, ends):
                 tokens, forms, _ = readout_table(tokenizer, q)
@@ -356,7 +391,7 @@ def main():
                 best = logits[:, forms].max(-1)[0].tolist()
                 answers.append(answer(q, probabilities(q, best, CALIBRATION)))
             rows.append({"ids": ids, "state": state_len, "question": question, "ends": [e[0] for e in ends]})
-        requests.append({"clip": clip, "picture": picture, "rows": rows, "tokens": read,
+        requests.append({"clip": clip, "picture": picture, "voices": voices, "rows": rows, "tokens": read,
                          "answers": [{"id": n, **a} for (n, _), a in zip(named, answers)]})
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
