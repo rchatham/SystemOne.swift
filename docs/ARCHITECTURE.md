@@ -27,8 +27,13 @@ public protocol DecisionBackend: AnyObject {
    then resolve every question whose rows are complete, in plan order. A
    postprocessing failure stops before later microbatches run.
 
-Shared building blocks: `SafetensorsFile` (F32/I64, strict layout) with
-`WeightSpecification` schemas and `PinnedArtifact` size + SHA-256 pins,
+Shared building blocks: `SafetensorsFile` (strict layout; float32, float16,
+bfloat16, integer, and bool tensors) and `SafetensorsCheckpoint` (sharded
+checkpoints through `model.safetensors.index.json`), both `TensorStore`s with
+`WeightSpecification` schemas and `PinnedArtifact` size + SHA-256 pins;
+MLX-quantized weights (`TensorStore.linear`, `.embedding`, `.denseWeight`,
+`MLXQuantizationConfiguration`, and the pure-Swift `AffineQuantization`
+reference, checked against `testdata/mlx_affine_quantization_v1.json`);
 `SafetensorsTensorView.mlxArray()`, `PythonSemantics` (CPython `str.strip`,
 `len`, `json.dumps` strings), `AntialiasedResize` (ATen's uint8 and float
 antialiased bilinear), `MelFilterbank` (librosa Slaney), and `ModelProfile`,
