@@ -3,14 +3,30 @@ import Foundation
 import CoreGraphics
 #endif
 
-/// Non-text input that accompanies a state. A request carries images or one
-/// audio clip, never both, matching the models trained on them.
+/// Non-text input that accompanies a state. A request carries images, one
+/// audio clip, or one video, matching the models trained on them.
 public enum SystemOneMedia: Equatable, Sendable {
     /// One or more images, encoded in order.
     case images([RGBImage])
 
     /// One mono speech clip.
     case audio(AudioClip)
+
+    /// One silent video: its decoded frames, which the backend samples.
+    case video(VideoClip)
+}
+
+/// A video's decoded frames in order, all the same size, at `fps` frames per
+/// second. A backend samples the frames it reads (d1-Omni-2B: 2 a second) and
+/// stamps them with times from `fps`.
+public struct VideoClip: Equatable, Sendable {
+    public let frames: [RGBImage]
+    public let fps: Double
+
+    public init(frames: [RGBImage], fps: Double) {
+        self.frames = frames
+        self.fps = fps
+    }
 }
 
 /// An 8-bit RGB image in row-major, interleaved `RGBRGB…` order.

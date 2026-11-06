@@ -26,6 +26,7 @@ private struct D1SetAudioFixture: Decodable {
     struct Request: Decodable {
         let clip: String?
         let picture: String?
+        let video: String?
         /// Spoken questions' clips by question id.
         let voices: [String: String]
         let rows: [Row]
@@ -35,6 +36,11 @@ private struct D1SetAudioFixture: Decodable {
 
     struct Clip: Decodable {
         let source: [Int]
+    }
+
+    struct Video: Decodable {
+        /// width, height, salt, frames, fps.
+        let source: [Double]
     }
 
     struct Calibration: Decodable {
@@ -51,10 +57,11 @@ private struct D1SetAudioFixture: Decodable {
     let words: [String: Int]
     let clips: [String: Clip]
     let pictures: [String: [Int]]
+    let videos: [String: Video]
     let requests: [Request]
 
     enum CodingKeys: String, CodingKey {
-        case codes, calibration, special, added, words, clips, pictures, requests
+        case codes, calibration, special, added, words, clips, pictures, videos, requests
         case setSize = "set_size"
         case maxPixels = "max_pixels"
     }
@@ -107,8 +114,16 @@ private struct D1SetAudioFixture: Decodable {
         return RGBImage(width: width, height: height, pixels: pixels)
     }
 
+    /// Frame `i` of a fixture video is the synthetic picture with salt `salt + 7 i`.
+    func video(_ name: String) -> VideoClip {
+        let s = videos[name]!.source
+        let (width, height, salt, count) = (Int(s[0]), Int(s[1]), Int(s[2]), Int(s[3]))
+        return VideoClip(frames: (0..<count).map { Self.synthetic([width, height, salt + 7 * $0]) }, fps: s[4])
+    }
+
     func media(_ request: Request) -> SystemOneMedia? {
         if let clip = request.clip { return .audio(Self.clip(clips[clip]!.source)) }
+        if let name = request.video { return .video(video(name)) }
         return request.picture.map { .images([Self.synthetic(pictures[$0]!)]) }
     }
 
@@ -216,6 +231,19 @@ private enum D1SetAudioRequests {
         SystemOneRequest(state: .media, questions: [
             QuestionEntry(id: "wet", question: .noul(Noul(instructions: "Is water wet?"))),
         ]),
+        // Videos: an odd frame count, a clip over the budget with no state, and a tiny one with a spoken question.
+        SystemOneRequest(state: .text("A clip of the shelf."), questions: [
+            QuestionEntry(id: "stocked", question: .noul(Noul(instructions: "Is the shelf stocked?"))),
+            QuestionEntry(id: "aisle", question: .choice(Choice(instructions: "Which aisle?", criteria: [
+                ChoiceOption(key: "dairy", description: "Dairy"), ChoiceOption(key: "bakery"),
+            ]))),
+        ]),
+        SystemOneRequest(state: .media, questions: [
+            QuestionEntry(id: "busy", question: .score(Score(instructions: "How busy is it?", criteria: [.text("empty"), .text("busy"), .text("packed")]))),
+        ]),
+        SystemOneRequest(state: .text("Tiny."), questions: [
+            QuestionEntry(id: "moving", question: .noul(Noul(instructions: ""))),
+        ]),
     ]
 }
 
@@ -250,6 +278,11 @@ final class D1SetAudioTests: XCTestCase {
                     XCTAssertNil(row.audio)
                     XCTAssertEqual(row.images.count, 1)
                 case nil:
+                    XCTAssertNil(row.audio)
+                    XCTAssertTrue(row.images.isEmpty)
+                    XCTAssertNil(row.video)
+                case .video(let clip)?:
+                    XCTAssertEqual(row.video, clip)
                     XCTAssertNil(row.audio)
                     XCTAssertTrue(row.images.isEmpty)
                 }
@@ -332,6 +365,18 @@ final class D1SetAudioTests: XCTestCase {
         XCTAssertThrowsError(try visionOnly.plan(D1SetAudioRequests.requests[1], media: fixture.media(fixture.requests[1]))) { error in
             XCTAssertEqual(error as? SystemOneEngineError, .unsupportedMedia(model: "d1-2b"))
         }
+        // Video needs the vision tower; mixed frame sizes and too few frames are refused.
+        let textOnly = D1SetBackend(
+            modelID: "d1-text", configuration: fixture.configuration,
+            tokenizer: AudioAddedTokenizer(added: fixture.added, words: fixture.words), trunk: nil
+        )
+        XCTAssertThrowsError(try textOnly.plan(D1SetAudioRequests.requests[12], media: fixture.media(fixture.requests[12]))) { error in
+            XCTAssertEqual(error as? SystemOneEngineError, .unsupportedMedia(model: "d1-text"))
+        }
+        let video = fixture.video("tiny")
+        let mixed = VideoClip(frames: video.frames + [D1SetAudioFixture.synthetic([30, 20, 1])], fps: video.fps)
+        XCTAssertThrowsError(try backend.plan(D1SetAudioRequests.requests[12], media: .video(mixed)))
+        XCTAssertThrowsError(try backend.plan(D1SetAudioRequests.requests[12], media: .video(VideoClip(frames: [video.frames[0]], fps: 2))))
     }
 }
 
@@ -401,9 +446,14 @@ final class D1SetAudioRuntimeTests: XCTestCase {
             let asked = try backend.plan(
                 fixture.speaking(D1SetAudioRequests.requests[7], fixture.requests[7]), media: fixture.media(fixture.requests[7])
             )
+            // A video state with a spoken question: video and audio tokens in one row.
+            let watched = try backend.plan(
+                fixture.speaking(D1SetAudioRequests.requests[14], fixture.requests[14]), media: fixture.media(fixture.requests[14])
+            )
             let apart = try backend.optionLogits(for: heard.rows) + backend.optionLogits(for: seen.rows)
                 + backend.optionLogits(for: text.rows) + backend.optionLogits(for: asked.rows)
-            let together = try backend.optionLogits(for: heard.rows + seen.rows + text.rows + asked.rows)
+                + backend.optionLogits(for: watched.rows)
+            let together = try backend.optionLogits(for: heard.rows + seen.rows + text.rows + asked.rows + watched.rows)
             XCTAssertEqual(together.count, apart.count)
             for (joined, alone) in zip(together, apart) {
                 XCTAssertEqual(joined.count, alone.count)

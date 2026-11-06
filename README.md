@@ -21,7 +21,7 @@ SystemOne        core: question/answer types, SystemOneEngine, DecisionBackend,
                  bounded microbatching, safetensors + weight schemas, ModelProfile,
                  torch- and Pillow-exact image resize, Slaney mel filterbank
 SystemOneD1      d1-omni: LFM2.5 trunk, decision head, SigLIP2 vision, FastConformer audio;
-                 d1-3B, d1-2B (text and pictures) and d1-Omni-2B (also audio) on the decoder trunks
+                 d1-3B (text, pictures), d1-2B (also video) and d1-Omni-2B (also audio) on the decoder trunks
 SystemOneVon     von: ModernBERT option-marker model and calibration
 SystemOneEncoders shared encoders: config-driven ModernBERT / mmBERT / Ettin
 SystemOneDecoders decoder trunks for decision readouts: Qwen3.5 (Gated DeltaNet + gated attention),

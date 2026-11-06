@@ -282,6 +282,12 @@ as vendored with d1-2B, and mlx-vlm's `lfm3_vl` port. It is used by d1-2B.
   `model.multi_modal_projector.` with `[hidden, 1, k, k]` kernels, or
   mlx-vlm's names with `[hidden, k, k, 1]`.
 
+- **Video** (`callAsFunction(video:layout:)`, `videoLayout`): the video
+  processor samples frames at its rate, resizes them all to one size within
+  the clip's pixel budget, and pairs them into temporal patches. Each pair
+  runs through the tower and projector as one picture, and `videoMarkup`
+  writes each pair's time and tokens.
+
 `LFM3Trunk` takes the features through `DecoderFeatures`, as `LFM2Trunk`
 does.
 

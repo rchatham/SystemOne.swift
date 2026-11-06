@@ -8,6 +8,14 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Added
 
+- Video: `SystemOneMedia.video(VideoClip)` (decoded frames and their fps),
+  read by d1-2B and d1-Omni-2B through LFM3-VL's video processor.
+  - Frames are sampled at 2 a second and resized to one size inside the
+    clip's pixel budget. Each pair of frames runs through the tower as one
+    temporal patch.
+  - `<|video|>` expands to each pair's `<t seconds>` and tokens, with
+    d1-Omni-2B's and d1-2B's own timestamp arithmetic.
+  - Other backends refuse video.
 - No state: `SystemOneState.media` (d1's `state=None`) makes the request's
   media the whole state, so a d1-Omni-2B spoken state is a clip alone.
   - d1-2B, d1-Omni-2B and d1-3B prompts write no state block and no
