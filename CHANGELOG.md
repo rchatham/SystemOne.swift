@@ -8,6 +8,23 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Added
 
+- JEV: `JEVBackend` (`--backend jev`) serves autotrust/JEV-9B, an open
+  Apache-2.0 student of TypeSafe's closed Jev 1.13, on `Qwen35Trunk`.
+  - One `bare-v1` prompt per question. A 24-slot float32 head reads the last
+    token, with one `calibration.json` temperature per kind.
+  - Choices take 1–16 options and scores exactly six levels. Prompts over
+    `maxLength` keep the head 60 % and tail 40 % of the state, as JEV's server
+    does.
+  - `JEVArtifacts.jev9B` pins the five shards, the adapter and the head.
+  - On a tiny transformers + peft reference it matches within 1.1e-5
+    relative at float32 (`tools/jev_golden_capture.py`).
+- `LoRAAdapter`: a peft LoRA merged into `Qwen35Trunk`'s linear layers as they
+  load, exactly as `merge_and_unload` does onto the stored base. Plain LoRA
+  only, and every adapter tensor must be used.
+- `Qwen35Trunk(store:configuration:dataType:adapter:loadsReadout:)`:
+  `loadsReadout: false` skips an untied language-model head that a model
+  never reads.
+- `ReversibleDecoderTokenizer` (`HubDecoderTokenizer.decode`).
 - Video: `SystemOneMedia.video(VideoClip)` (decoded frames and their fps),
   read by d1-2B and d1-Omni-2B through LFM3-VL's video processor.
   - Frames are sampled at 2 a second and resized to one size inside the

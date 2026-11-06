@@ -9,7 +9,8 @@ Qwen3.5 interleaves two token mixers. The released models put three Gated
 DeltaNet layers before each gated full-attention layer. Pruned models such as
 d3-edge mix them freely, so `layer_types` is read per layer. One trunk covers:
 - the d3 family (vllm-sr): d3-lite, -mini, -flash, and -edge;
-- Perplexity Decider, KnowLine, OneJev, Kev, JEV, and OpenThai-SystemOne;
+- Perplexity Decider, KnowLine, OneJev, Kev, JEV (served by `JEVBackend`),
+  and OpenThai-SystemOne;
 - plain Qwen3.5 checkpoints, for generic next-token labels.
 
 The forward pass matches transformers' `Qwen3_5TextModel`:
@@ -190,6 +191,95 @@ records:
 Swift reproduces the prompts byte for byte. The MLX test runs each state's six
 questions in one right-padded batch and matches the unbatched reference
 answers within 5e-3. A Python MLX transliteration matches within 7e-6.
+
+## JEV (`JEVBackend`)
+
+[autotrust/JEV-9B](https://huggingface.co/autotrust/JEV-9B) (Apache-2.0) is an
+open student of TypeSafe's closed, hosted Jev 1.13. Its model card reports a
+mean KL of about 0.019 to Jev's own distributions. It ships three pieces:
+- a frozen Qwen3.5-9B text backbone (`Qwen3_5ForCausalLM`, five bf16 shards);
+- a peft LoRA (r = 16, α = 32) on every decoder projection;
+- a 24-slot float32 head (`head.safetensors`).
+
+The backend runs JEV's System 1 path (typed decisions), following the model
+card's transformers + peft reference. TypeSafe Jev itself has no public
+weights.
+
+- **Prompt (`bare-v1`):** one per question, tokenized whole with no chat
+  template and no special tokens:
+  ```
+  [kind] choice
+  [state] …
+  [question] …
+  [options]
+  A) key: description
+  B) key
+  [decision]:
+  ```
+  - A noul always lists `false`, `true`, and a score `0` … `5`. What their
+    sides or levels mean travels in the `[question]` line
+    (`JEVPrompt.foldedQuestion`).
+  - A choice takes 1–16 options (`A)`–`P)`); a score must have exactly six levels.
+  - A one-option choice is answered with probability 1 and runs no forward.
+  - States render as d3's do.
+  - A prompt over `maxLength` tokens (default 4,096) keeps the first 60 % and
+    last 40 % of its state's tokens, as JEV's own server truncates.
+- **Weights:**
+  - `LoRAAdapter` merges the adapter into each targeted linear as
+    `Qwen35Trunk` loads it, exactly as peft's `merge_and_unload` does onto
+    the bf16 base: `bf16(f32(W) + (α / r) · B @ A)`. Every adapter tensor must
+    be used.
+  - `loadsReadout: false` skips the untied `lm_head` (2 GB).
+  - `JEVArtifacts.jev9B` pins the shards, the adapter and the head at
+    revision `7ac669b8fb476ba926491e3d1c39f9330d68dbed`.
+- **Attention:** causal everywhere. Rows are right-padded and read at their
+  own last token.
+- **Readout:**
+  - The final-norm state at the last token, in float32, goes through
+    `proj.weight` `[24, hidden]` plus `proj.bias`.
+  - Slots come from `judge_config.json`: noul 0–1, score 2–7, choice 8–23.
+  - A kind's active slots are divided by its `calibration.json` temperature
+    and softmaxed.
+  - The reference's vLLM path reads the log-probabilities of 24 verbalizer
+    tokens instead. The log-softmax normaliser cancels within a kind, so the
+    head alone gives the same distribution.
+- **Answers:** as d3's (`DecoderAnswers`): Jev's confidence `1 − H / log k`,
+  a noul is `P(true)`, and a score is the expected level.
+
+`system-one serve --backend jev --model-folder <snapshot>` serves it.
+
+### Verification
+
+`tools/jev_golden_capture.py` runs transformers' Qwen3.5 classes and peft on
+CPU float32, as the oracle. Its reference is exact:
+- a bf16 base;
+- peft's merge (asserted against `bf16(f32(W) + s · B @ A)`);
+- `A_log` and the gated-norm weights at their stored float32 values;
+- float32 compute.
+
+It writes two fixtures:
+- **`tiny`** (committed, 435 KB): a seeded random Qwen3.5 in JEV-9B's exact
+  layout, with two bf16 shards behind an index, an fp32 peft adapter, a
+  24-slot head and the JSON configs. It regenerates byte for byte
+  (`tiny --check`).
+- **`full`** (needs the snapshot): tokenizer ids, prompts, a final-norm probe,
+  head logits, and calibrated probabilities for the model card's examples.
+
+| Check | Float32, GPU / CPU |
+|---|---|
+| Tiny final-norm states and head logits | 8.4e-6 / 1.1e-5 relative |
+| Tiny merged weights | within one bf16 rounding |
+| Tiny right-padded batch vs single rows | 1e-4 relative bound |
+| Tiny bf16 vs float32 (noul probability) | 0.031 / 0.014 |
+
+```bash
+# Full model: download, write the fixture, then check tokenizer, prompts and weights
+hf download autotrust/JEV-9B --revision 7ac669b8fb476ba926491e3d1c39f9330d68dbed \
+  --include "*.json" "*.jinja" "model-*.safetensors" "head.safetensors" "adapter/*" --local-dir weights/JEV-9B
+.venv-jev/bin/python tools/jev_golden_capture.py full --model-folder weights/JEV-9B
+JEV_MODEL_FOLDER="$PWD/weights/JEV-9B" SYSTEMONE_MLX_TESTS=1 SYSTEMONE_MLX_DEVICE=gpu \
+  xcrun xctest -XCTest SystemOneDecodersTests.JEVFullModelTests "$PWD/.build/xcode/Build/Products/Debug/SystemOneDecodersTests.xctest"
+```
 
 ## LFM2 (`LFM2Trunk`)
 
