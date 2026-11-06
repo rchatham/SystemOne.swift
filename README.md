@@ -153,6 +153,11 @@ xcodebuild build -scheme system-one-chat -destination 'platform=macOS,arch=arm64
 .build/xcode/Build/Products/Debug/system-one-chat --model-folder weights/d1-omni-600M
 ```
 
+`HTTPDecider` routes through `system-one serve` instead of an in-process
+engine, for the iOS Simulator, where MLX cannot run.
+[Examples/SystemOneChatApp](Examples/SystemOneChatApp/README.md) is the same
+chatbot as a SwiftUI app for iPhone, iPad, and Mac.
+
 ## Verification
 
 | | d1-omni-600M (GPU) | von (GPU) |
@@ -199,6 +204,7 @@ von's installation, conversion, and parity commands are in
 - [docs/MODEL-SURVEY.md](docs/MODEL-SURVEY.md): other System One architectures and models, and a roadmap for adding them
 - [docs/HANDOFF.md](docs/HANDOFF.md): resume-here state
 - [Examples/SystemOneHarness](Examples/SystemOneHarness/README.md): iOS app running d1 on device with camera, photo, and microphone input
+- [Examples/SystemOneChatApp](Examples/SystemOneChatApp/README.md): the chatbot as an iPhone, iPad, and native Mac app
 
 ## License
 
