@@ -144,6 +144,7 @@ von's installation, conversion, and parity commands are in
 - [docs/D1.md](docs/D1.md): how d1-omni works and how the port matches it
 - [docs/VON.md](docs/VON.md): von installation and verification record
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): microbatching and von benchmarks
+- [docs/MODEL-SURVEY.md](docs/MODEL-SURVEY.md): other System One architectures and models, and a roadmap for adding them
 - [docs/HANDOFF.md](docs/HANDOFF.md): resume-here state
 - [Examples/SystemOneHarness](Examples/SystemOneHarness/README.md): iOS app running d1 on device with camera, photo, and microphone input
 

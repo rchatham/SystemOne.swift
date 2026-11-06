@@ -30,6 +30,7 @@ Read these first, in order:
 | 7 — HTTP server `/v1/systemone` | ✅ done |
 | 8 — Performance | ✅ done |
 | 9 — SystemOne core + d1-omni (text, vision, audio) | ✅ done |
+| 10–15 — next models and protocol | 📋 proposed in [MODEL-SURVEY.md](MODEL-SURVEY.md#recommended-roadmap) |
 
 d1 lives in `SystemOneD1`; see [D1.md](D1.md). Its oracle is a separate venv,
 `.venv-d1` (torch 2.14.0, torchvision 0.29.1, transformers 5.17.0, tokenizers
@@ -37,6 +38,11 @@ d1 lives in `SystemOneD1`; see [D1.md](D1.md). Its oracle is a separate venv,
 `~/.cache/huggingface/hub/models--LiquidAI--d1-omni-600M/snapshots/02b55d7076f15129e59ab3f94783f32c4b088674`.
 MLX tests that touch weights need the Xcode test bundle (SwiftPM bundles and
 CLI builds lack the Metal library, even for the CPU device).
+
+Next work: [MODEL-SURVEY.md](MODEL-SURVEY.md) (2026-11-03) surveys the System
+One field and proposes phases 10–15. Start with Phase 10, the weight loader:
+BF16/F16, shards and MLX affine quantization, verified on d1-omni-600M's MLX
+exports against the existing d1 fixture.
 
 ## Environment facts
 
