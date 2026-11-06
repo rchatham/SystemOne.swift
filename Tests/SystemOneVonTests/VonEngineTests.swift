@@ -277,6 +277,31 @@ final class VonEngineTests: XCTestCase {
         XCTAssertEqual(first.flatMap { $0 }.sorted(), Array(0..<6))
     }
 
+    func testMicrobatchIndicesCostRowsAgainstASharedPrefix() {
+        XCTAssertEqual(
+            SystemOneEngine.microbatchIndices(sequenceLengths: [40, 22], maxAmplification: 1.5),
+            [[0], [1]],
+            "2 × 40² exceeds 1.5 × (40² + 22²)"
+        )
+        XCTAssertEqual(
+            SystemOneEngine.microbatchIndices(sequenceLengths: [40, 22], sharedPrefixLength: 1_776, maxAmplification: 1.5),
+            [[0, 1]],
+            "padding is small next to keys every row shares"
+        )
+        XCTAssertEqual(
+            SystemOneEngine.microbatchIndices(
+                sequenceLengths: Array(repeating: 40, count: 15), sharedPrefixLength: 1_776, maxAmplification: 1.5
+            ).map(\.count),
+            [14, 1],
+            "the absolute bound counts prefix keys: 15 × 40 × 1,816 > 1,048,576"
+        )
+        XCTAssertEqual(
+            SystemOneEngine.microbatchIndices(sequenceLengths: [2, 2], sharedPrefixLength: Int.max, maxAmplification: 2.0),
+            [[0], [1]],
+            "overflowing row work stays a singleton"
+        )
+    }
+
     func testEmptyRequestNeverInvokesBatchProvider() async throws {
         let tokenizer = try await VonTokenizer(modelFolder: tokenizerResourceURL())
         let recorder = BatchLogitsRecorder(rowLogits: [])
