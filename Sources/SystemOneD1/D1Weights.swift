@@ -210,6 +210,31 @@ public struct D1Weights: Sendable {
         )
     }
 
+    /// `name`'s head weight as a dense array in PyTorch layout, whatever the
+    /// export split (the fused `in_proj`) or quantized: what `D1DecisionHead`
+    /// keys its parameters by and head training differentiates.
+    func denseArray(_ name: String) -> MLXArray {
+        guard layout == .mlx else { return array(name) }
+        if let fused = name.range(of: ".self_attn.in_proj_") {
+            let linear = headInProjection(String(name[..<fused.lowerBound]))
+            return name.hasSuffix("weight") ? Self.denseWeight(of: linear) : linear.bias!
+        }
+        guard name.hasSuffix(".weight") else { return array(name) }
+        let module = String(name.dropLast(".weight".count))
+        guard let width = inputWidths[module] else { return array(name) }
+        // The schema was validated at load, so every module loads.
+        return try! store.denseWeight(Self.mlxName(module), inputWidth: width, dataType: dataType)
+    }
+
+    /// A linear layer's weight, dequantized when the export stores it quantized.
+    static func denseWeight(of linear: Linear) -> MLXArray {
+        guard let quantized = linear as? QuantizedLinear else { return linear.weight }
+        return dequantized(
+            quantized.weight, scales: quantized.scales, biases: quantized.biases,
+            groupSize: quantized.groupSize, bits: quantized.bits, mode: quantized.mode
+        )
+    }
+
     /// Casts a weight derived in float32 (folded BatchNorm, say) to the compute
     /// dtype, recording it like `array(_:)` when float16 cannot hold it.
     func cast(_ derived: MLXArray, name: String) -> MLXArray {
