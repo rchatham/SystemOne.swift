@@ -125,7 +125,10 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   (`tools/d1_2b_fixture.py`).
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
-  `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`.
+  `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`. Image and
+  audio requests run the media prefix through the trunk once and reuse its
+  keys, values, and conv state for every question (a three-question photo on
+  an iPhone 14 Pro: 5.0 s to 2.9 s).
 - `DecisionBackend`, `PlannedRow`, and `DecisionPlan`: the extension point for
   System One models; `SystemOneEngine.d1(modelFolder:)` and
   `SystemOneEngine.von(tokenizerFolder:verifiedWeightsURL:)` factories.
@@ -137,6 +140,13 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   infinity; the mel front end, logits, and calibration stay float32.
   The iOS harness picks float16 when `os_proc_available_memory()` is too small
   for float32 and shows the loaded precision.
+- d1 head-only training spike (internal): `D1HeadTraining` computes a masked
+  cross-entropy over the decision head's raw logits, with the trunk frozen and
+  every head weight passed to `valueAndGrad`. `tools/d1_training_capture.py`
+  records PyTorch's loss, gradients, and one gradient-descent step in
+  `testdata/d1_training_golden_v1.json`; on the GPU, Swift matches all 31
+  head gradients to 3e-5 relative in norm, and the step's loss (3.8168 to
+  3.4239) to 2e-5. See `docs/FEDERATED.md`.
 - `SystemOneMedia`, `RGBImage` (including `init?(cgImage:)`), and `AudioClip`.
 - `ModelProfile`, `VonModelProfile`, and `D1ModelProfile` for model-agnostic
   HTTP admission and service metadata.
