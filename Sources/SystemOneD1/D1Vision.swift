@@ -100,7 +100,7 @@ final class D1Vision {
         dataType = weights.dataType
         let tower = "vision.tower.vision_model"
         func linear(_ name: String) -> Linear {
-            Linear(weight: weights.array("\(name).weight"), bias: weights.array("\(name).bias"))
+            weights.linear(name)
         }
         patchEmbedding = linear("\(tower).embeddings.patch_embedding")
         let side = Int(Double(configuration.numPatches).squareRoot())

@@ -54,7 +54,7 @@ final class D1Audio {
         self.configuration = configuration
         dataType = weights.dataType
         func linear(_ name: String, bias: Bool = true) -> Linear {
-            Linear(weight: weights.array("\(name).weight"), bias: bias ? weights.array("\(name).bias") : nil)
+            weights.linear(name, bias: bias)
         }
         func norm(_ name: String) -> Norm { Norm(weight: weights.array("\(name).weight"), bias: weights.array("\(name).bias")) }
         /// Conv1d `[out, in, 1]` as a Linear over the channel axis.

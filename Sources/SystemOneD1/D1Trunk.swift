@@ -50,11 +50,11 @@ final class D1Trunk {
         let configuration = weights.configuration.text
         self.configuration = configuration
         dataType = weights.dataType
-        embedding = Embedding(weight: weights.array("encoder.embed_tokens.weight"))
+        embedding = weights.embedding("encoder.embed_tokens")
         finalNorm = weights.array("encoder.embedding_norm.weight")
         layers = (0..<configuration.numHiddenLayers).map { index in
             let prefix = "encoder.layers.\(index)"
-            func linear(_ name: String) -> Linear { Linear(weight: weights.array("\(prefix).\(name).weight")) }
+            func linear(_ name: String) -> Linear { weights.linear("\(prefix).\(name)", bias: false) }
             let op: Operator
             if configuration.isAttentionLayer(index) {
                 op = .attention(

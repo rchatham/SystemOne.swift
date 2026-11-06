@@ -34,7 +34,7 @@ final class D1DecisionHead {
         parameters = Dictionary(uniqueKeysWithValues: D1Weights.schema(for: weights.configuration)
             .map(\.name)
             .filter { $0.hasPrefix("head.") }
-            .map { ($0, weights.array($0)) })
+            .map { ($0, weights.denseArray($0)) })
     }
 
     /// Scores marker positions of right-padded text rows.
