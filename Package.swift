@@ -58,6 +58,7 @@ let package = Package(
             name: "SystemOneD1",
             dependencies: [
                 "SystemOne",
+                "SystemOneDecoders",
                 .product(name: "Hub", package: "swift-transformers"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "MLX", package: "mlx-swift"),
@@ -139,6 +140,7 @@ let package = Package(
             dependencies: [
                 "SystemOne",
                 "SystemOneD1",
+                "SystemOneDecoders",
                 .product(name: "MLX", package: "mlx-swift"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]

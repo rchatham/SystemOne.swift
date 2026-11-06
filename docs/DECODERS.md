@@ -190,3 +190,30 @@ records:
 Swift reproduces the prompts byte for byte. The MLX test runs each state's six
 questions in one right-padded batch and matches the unbatched reference
 answers within 5e-3. A Python MLX transliteration matches within 7e-6.
+
+## LFM2 (`LFM2Trunk`)
+
+`LFM2Trunk` is the causal LFM2 / LFM2.5 text trunk, following transformers'
+`Lfm2Model`. It is used for d1-3B (`SystemOneD1`'s `D1ChatBackend`) and other
+LFM2-VL checkpoints. Each layer is either a gated short convolution or an
+attention layer, then a SwiGLU feed-forward block:
+- **Gated short convolution:** `in_proj` gives B, C and x. Then
+  `y = C · conv(B · x)`, a causal depthwise convolution with `conv_L_cache`
+  taps, followed by `out_proj`.
+- **Attention:** grouped-query attention, with query and key RMSNorm per head
+  and full-width RoPE.
+- **Feed-forward:** a SwiGLU block (`w1`, `w3`, `w2`). Its width is reduced
+  when the config sets `block_auto_adjust_ff_dim`.
+
+`embedding_norm` closes the stack. `LFM2Configuration` reads the LFM2-VL
+config, which nests `text_config`. Layers come from `layer_types`, or from
+`full_attn_idxs` in older configs.
+
+Weights are found under `model.language_model.`, `language_model.model.`
+(mlx-vlm) or `model.`. Convolution kernels may be stored as
+`[channels, 1, kernel]` or `[channels, kernel, 1]`. The trunk takes the same
+right-padded rows, `DecoderAttention` plans and `DecoderCache` prefixes as
+`Qwen35Trunk`. `tools/lfm2_fixture.py` records transformers' hidden states for
+padded rows and for rows after a prefix that is filled in two prefills. The
+MLX tests match them within 1e-4; a Python MLX transliteration matches within
+6e-6.

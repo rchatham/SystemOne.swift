@@ -52,6 +52,14 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   noul, and score answers. `HubDecoderTokenizer` reads the folder's tokenizer.
   Prompt goldens and tiny-readout answers in `testdata/d3_tiny/`
   (`tools/d3_fixture.py`).
+- `LFM2Trunk` (`SystemOneDecoders`): the causal LFM2 / LFM2.5 trunk (gated
+  short convolutions and GQA) with the shared plans, prefix caches, and
+  readout rows. Checked against
+  transformers with `testdata/lfm2_tiny/` (`tools/lfm2_fixture.py`).
+- `D1ChatBackend` (`SystemOneD1`): d1-3B's text decisions, with the
+  reference's prompt, single-token option codes, max-pooled next-token
+  readout, and answers; a request's questions share one prefilled state.
+  Goldens in `testdata/d1_3b_tiny/` (`tools/d1_3b_fixture.py`).
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
   `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`. Image and
