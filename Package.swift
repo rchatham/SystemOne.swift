@@ -14,7 +14,9 @@ let package = Package(
         .library(name: "SystemOneEncoders", targets: ["SystemOneEncoders"]),
         .library(name: "SystemOneDecoders", targets: ["SystemOneDecoders"]),
         .library(name: "SystemOneHTTP", targets: ["SystemOneHTTP"]),
+        .library(name: "SystemOneChat", targets: ["SystemOneChat"]),
         .executable(name: "system-one", targets: ["SystemOneCLI"]),
+        .executable(name: "system-one-chat", targets: ["SystemOneChatCLI"]),
     ],
     dependencies: [
         .package(
@@ -100,6 +102,16 @@ let package = Package(
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        .target(
+            name: "SystemOneChat",
+            dependencies: ["SystemOne"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .executableTarget(
+            name: "SystemOneChatCLI",
+            dependencies: ["SystemOne", "SystemOneD1", "SystemOneChat"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .executableTarget(
             name: "SystemOneCLI",
             dependencies: ["SystemOne", "SystemOneVon", "SystemOneD1", "SystemOneEncoders", "SystemOneDecoders", "SystemOneHTTP"],
@@ -121,6 +133,11 @@ let package = Package(
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
             ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "SystemOneChatTests",
+            dependencies: ["SystemOne", "SystemOneChat"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
