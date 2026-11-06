@@ -19,6 +19,11 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   mlx 0.32.4) pin MLX's packing.
 - CI runs MLX checks from the Xcode test bundle (`SYSTEMONE_MLX_TESTS=1`) on
   tiny fixtures.
+- `SystemOneD1` loads LiquidAI's mlx-vlm exports (`d1-omni-600M-MLX-fp16`,
+  `-MLX-8bit`) as well as the PyTorch checkpoint: `D1WeightLayout`, an
+  export schema matching the published tensor names, and quantized linears and
+  token embedding. `D1Weights.init(modelFolder:configuration:artifact:precision:)`
+  opens either; `D1Backend` uses it.
 - `SystemOneD1`: LiquidAI d1-omni-600M (text, images, and speech) as a
   `DecisionBackend`, verified against the pinned snapshot's own code with
   `tools/d1_golden_capture.py` and `testdata/d1_golden_v1.json`. Image and
@@ -62,6 +67,10 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 - Safetensors headers with `"__metadata__": null`, which `mx.save_safetensors`
   writes when given no metadata, now load with no metadata, as the reference
   implementation reads them. Other non-object metadata is still rejected.
+- **Breaking:** `D1Weights.safetensors` is now `store` (`any TensorStore`), and
+  `D1Weights.init(safetensors:configuration:precision:)` is
+  `init(store:configuration:precision:quantization:)`.
+
 - **Breaking:** the package is now `SystemOne`. Modules: `SystemOne` (core),
   `SystemOneVon`, `SystemOneD1`, `SystemOneHTTP`; the executable is
   `system-one`. `VonEngine` → `SystemOneEngine`, `VonState` →
