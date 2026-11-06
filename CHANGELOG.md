@@ -8,6 +8,20 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Added
 
+- Wire schema, closer to TypeSafe's:
+  - `instructions` is optional; a noul without it needs criteria.
+  - Choice and noul criterion values may be objects or arrays, which reach
+    the model as `json.dumps` text.
+  - The per-question option cap comes from the served model's
+    `ModelProfile.maximumOptionsPerQuestion`: 64 for von and d1-omni, 255 for
+    `DecisionModelProfile`. `WireSafetyLimits` now defaults to 255.
+  - Every profile's `GET /v1/models` carries TypeSafe's `models` list next to
+    OpenAI's `data`.
+  - A request with a `Content-Encoding` other than identity gets
+    `415 Unsupported Media Type`.
+- `DecisionModelProfile` for backends that render their own prompts, and
+  `system-one serve --backend d1-3b|d1-2b|d3|decisiontune|marker|tree` to serve
+  them.
 - Weight formats for the next model families: safetensors float16, bfloat16,
   and integer tensors (`SafetensorsDataType`); sharded checkpoints
   (`SafetensorsCheckpoint`, over a shared `TensorStore` protocol); and MLX

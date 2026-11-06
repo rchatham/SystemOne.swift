@@ -102,7 +102,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "SystemOneCLI",
-            dependencies: ["SystemOne", "SystemOneVon", "SystemOneD1", "SystemOneHTTP"],
+            dependencies: ["SystemOne", "SystemOneVon", "SystemOneD1", "SystemOneEncoders", "SystemOneDecoders", "SystemOneHTTP"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(

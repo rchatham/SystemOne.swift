@@ -388,6 +388,17 @@ final class SystemOneHTTPServerTests: XCTestCase {
         }
     }
 
+    func testCompressedBodiesGet415() async throws {
+        try await withServer { baseURL in
+            let body = #"{"state":"x","questions":{}}"#
+            let head =
+                "POST /v1/systemone HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Encoding: zstd\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
+            let response = try await self.rawExchange(port: baseURL.port!, request: head + body, expectedResponses: 1)
+            XCTAssertTrue(response.contains("HTTP/1.1 415 Unsupported Media Type"), response)
+            XCTAssertTrue(response.contains(#"{"detail":"Unsupported Media Type"}"#), response)
+        }
+    }
+
     func testObservedChunkedOverflowReturnsImmediate413AndCloses() async throws {
         let configuration = SystemOneHTTPServerConfiguration(maximumBodyBytes: 16)
         try await withServer(configuration: configuration) { baseURL in
