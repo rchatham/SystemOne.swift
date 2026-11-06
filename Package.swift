@@ -86,6 +86,7 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFFT", package: "mlx-swift"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

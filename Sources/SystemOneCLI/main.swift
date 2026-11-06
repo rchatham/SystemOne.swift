@@ -71,8 +71,9 @@ private let usage = """
 
     Backends:
       d1             LiquidAI d1-omni-600M (default), PyTorch or MLX export
-      d1-3b          LiquidAI d1-3B, text decisions
-      d1-2b          LiquidAI d1-2B, noul / choice / score on text states
+      d1-3b          LiquidAI d1-3B, decisions on text and pictures
+      d1-2b          LiquidAI d1-2B or d1-Omni-2B, noul / choice / score on text,
+                     pictures, and (d1-Omni-2B) audio
       d3             vllm-sr d3, d3-lite, d3-edge, ...
       decisiontune   DecisionTune 1.0
       marker         Laya or Julia-1
