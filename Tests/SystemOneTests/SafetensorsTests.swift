@@ -231,7 +231,7 @@ final class SafetensorsTests: XCTestCase {
             "{\"tensor\":{\"dtype\":\"F32\",\"shape\":[1],\"data_offsets\":[0,4],\"extra\":0}}",
             "{\"tensor\":42}",
             "{\"tensor\":{\"dtype\":1,\"shape\":[1],\"data_offsets\":[0,4]}}",
-            "{\"tensor\":{\"dtype\":\"BF16\",\"shape\":[1],\"data_offsets\":[0,4]}}",
+            "{\"tensor\":{\"dtype\":\"F64\",\"shape\":[1],\"data_offsets\":[0,8]}}",
             "{\"__metadata__\":null}",
             "{\"__metadata__\":{\"number\":1}}",
         ]
@@ -240,6 +240,22 @@ final class SafetensorsTests: XCTestCase {
             let url = try makeFile(header: Array(header.utf8), payload: [0, 0, 0, 0])
             XCTAssertThrowsError(try SafetensorsFile(contentsOf: url), "case \(index)")
         }
+    }
+
+    func testAcceptsBFloat16DescriptorsAndChecksTheirByteWidth() throws {
+        let header = #"{"w":{"dtype":"BF16","shape":[2,3],"data_offsets":[0,12]}}"#
+        let file = try SafetensorsFile(contentsOf: makeFile(header: Array(header.utf8), payload: Array(0..<12)))
+        let w = try XCTUnwrap(file.tensor(named: "w"))
+        XCTAssertEqual(w.descriptor.dataType, .bfloat16)
+        XCTAssertEqual(w.descriptor.byteCount, 12)
+        XCTAssertNoThrow(try file.validate(schema: [WeightSpecification(name: "w", shape: [2, 3], dataType: .bfloat16)]))
+        XCTAssertThrowsError(try file.validate(schema: [WeightSpecification(name: "w", shape: [2, 3])])) {
+            XCTAssertEqual($0 as? WeightsError, .dataTypeMismatch(name: "w", expected: .float32, actual: .bfloat16))
+        }
+
+        // Two bytes per element: a float32-sized range is a length mismatch.
+        let wrongWidth = #"{"w":{"dtype":"BF16","shape":[2],"data_offsets":[0,8]}}"#
+        XCTAssertThrowsError(try SafetensorsFile(contentsOf: makeFile(header: Array(wrongWidth.utf8), payload: Array(0..<8))))
     }
 
     func testRejectsInvalidShapeNumbersAndCheckedProducts() throws {

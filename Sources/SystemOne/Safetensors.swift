@@ -1,16 +1,19 @@
 import Darwin
 import Foundation
 
-/// The tensor element types the loader accepts. Models compute in float32;
-/// `I64` appears only for bookkeeping tensors such as BatchNorm counters.
+/// The tensor element types the loader accepts. `BF16` holds released
+/// bfloat16 checkpoints; `I64` appears only for bookkeeping tensors such as
+/// BatchNorm counters.
 public enum SafetensorsDataType: String, Sendable {
     case float32 = "F32"
+    case bfloat16 = "BF16"
     case int64 = "I64"
 
     /// Bytes per element.
     public var byteWidth: Int {
         switch self {
         case .float32: return 4
+        case .bfloat16: return 2
         case .int64: return 8
         }
     }
@@ -405,7 +408,7 @@ private struct SafetensorsHeader {
         guard let dataType = SafetensorsDataType(rawValue: dataTypeName) else {
             throw SafetensorsError.invalidDescriptor(
                 name: name,
-                reason: "unsupported dtype \(dataTypeName); expected F32 or I64"
+                reason: "unsupported dtype \(dataTypeName); expected F32, BF16 or I64"
             )
         }
 

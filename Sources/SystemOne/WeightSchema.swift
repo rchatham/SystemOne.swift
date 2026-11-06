@@ -35,6 +35,9 @@ public enum WeightsError: Error, Equatable, Sendable {
     case dataTypeMismatch(name: String, expected: SafetensorsDataType, actual: SafetensorsDataType)
     case shapeMismatch(name: String, expected: [Int], actual: [Int])
     case float16Overflow(name: String, maximumMagnitude: Float)
+    case invalidShardIndex(String)
+    case shardContentsMismatch(shard: String, missing: [String], unexpected: [String])
+    case shardPinsMismatch(missing: [String], unexpected: [String])
 }
 
 extension WeightsError: LocalizedError {
@@ -52,6 +55,12 @@ extension WeightsError: LocalizedError {
             return "Tensor \(name) has shape \(actual); expected \(expected)."
         case .float16Overflow(let name, let maximumMagnitude):
             return "Tensor \(name) holds \(maximumMagnitude), beyond float16's range (65504); load it at float32."
+        case .invalidShardIndex(let reason):
+            return "Sharded checkpoint index is invalid: \(reason)."
+        case .shardContentsMismatch(let shard, let missing, let unexpected):
+            return "Shard \(shard) does not hold the tensors its index assigns it; missing \(missing), unexpected \(unexpected)."
+        case .shardPinsMismatch(let missing, let unexpected):
+            return "Shard pins do not match the index's shards; unpinned \(missing), unknown \(unexpected)."
         }
     }
 }
@@ -87,6 +96,15 @@ extension SafetensorsFile {
 
     /// Requires exactly the schema's tensor names, with matching dtypes and shapes.
     public func validate(schema: [WeightSpecification]) throws {
+        try Self.validate(descriptors, schema: schema)
+    }
+
+    /// Requires exactly the schema's tensor names, with matching dtypes and
+    /// shapes, in a set of descriptors that may span several files.
+    static func validate(
+        _ descriptors: [String: SafetensorsTensorDescriptor],
+        schema: [WeightSpecification]
+    ) throws {
         let expectedNames = Set(schema.map(\.name))
         let actualNames = Set(descriptors.keys)
         let missing = expectedNames.subtracting(actualNames).sorted()
@@ -123,13 +141,34 @@ extension SafetensorsFile {
 }
 
 extension SafetensorsTensorView {
-    /// Copies this float32 tensor into an MLX-owned array, so no MLX array ever
-    /// retains a pointer into the read-only safetensors mapping.
+    /// Copies this float32 or bfloat16 tensor into an MLX-owned array of the
+    /// same type, so no MLX array ever retains a pointer into the read-only
+    /// safetensors mapping.
     package func mlxArray() -> MLXArray {
-        precondition(descriptor.dataType == .float32, "Only float32 tensors are copied into MLX")
-        return withUnsafeBytes { bytes in
-            MLXArray(Data(bytes: bytes.baseAddress!, count: bytes.count), descriptor.shape, dtype: .float32)
+        switch descriptor.dataType {
+        case .float32:
+            return withUnsafeBytes { bytes in
+                MLXArray(Data(bytes: bytes.baseAddress!, count: bytes.count), descriptor.shape, dtype: .float32)
+            }
+        case .bfloat16:
+            return alignedCopy(dtype: .bfloat16)
+        case .int64:
+            preconditionFailure("Only float32 and bfloat16 tensors are copied into MLX")
         }
+    }
+
+    /// Copies the raw payload into a page-aligned buffer the array owns, so
+    /// Metal wraps it without a second copy. A multi-gigabyte bfloat16 tensor
+    /// is then held once, not once as `Data` and again by MLX.
+    private func alignedCopy(dtype: DType) -> MLXArray {
+        let page = Int(getpagesize())
+        var buffer: UnsafeMutableRawPointer?
+        let capacity = max(page, (descriptor.byteCount + page - 1) / page * page)
+        precondition(posix_memalign(&buffer, page, capacity) == 0, "tensor buffer allocation failed")
+        withUnsafeBytes { bytes in
+            if let base = bytes.baseAddress, bytes.count > 0 { memcpy(buffer!, base, bytes.count) }
+        }
+        return MLXArray(rawPointer: buffer!, descriptor.shape, dtype: dtype) { free(buffer) }
     }
 
     /// The smallest magnitude float16 rounds to infinity: values below it round
