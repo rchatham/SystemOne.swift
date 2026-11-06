@@ -188,12 +188,13 @@ jobs:
             -scheme SystemOne-Package \
             -destination 'platform=macOS,arch=arm64' \
             -configuration Release \
-            -derivedDataPath .build/xcode
+            -derivedDataPath .build/xcode \
+            ENABLE_TESTABILITY=YES
 
       - name: Weight parity (GPU)
         env:
           D1_MODEL_PARITY: "1"
           D1_DEVICE: gpu
         run: |
-          xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests \
+          xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests,SystemOneD1Tests.D1HeadTrainingTests \
             .build/xcode/Build/Products/Release/SystemOneD1Tests.xctest
