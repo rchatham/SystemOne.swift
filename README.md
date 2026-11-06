@@ -23,6 +23,7 @@ SystemOne        core: question/answer types, SystemOneEngine, DecisionBackend,
 SystemOneD1      d1-omni: LFM2.5 trunk, decision head, SigLIP2 vision, FastConformer audio
 SystemOneVon     von: ModernBERT option-marker model and calibration
 SystemOneEncoders shared encoders: config-driven ModernBERT / mmBERT / Ettin
+SystemOneDecoders decoder trunks for decision readouts: Qwen3.5 (Gated DeltaNet + gated attention)
 SystemOneHTTP    SwiftNIO server for POST /v1/systemone, model-agnostic
 system-one       CLI: `system-one serve`
 ```
@@ -145,6 +146,7 @@ von's installation, conversion, and parity commands are in
 - [docs/D1.md](docs/D1.md): how d1-omni works and how the port matches it
 - [docs/VON.md](docs/VON.md): von installation and verification record
 - [docs/ENCODERS.md](docs/ENCODERS.md): the shared ModernBERT-family encoder
+- [docs/DECODERS.md](docs/DECODERS.md): the Qwen3.5 decoder trunk, attention plans, and prefix caches
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): microbatching and von benchmarks
 - [docs/MODEL-SURVEY.md](docs/MODEL-SURVEY.md): other System One architectures and models, and a roadmap for adding them
 - [docs/HANDOFF.md](docs/HANDOFF.md): resume-here state
