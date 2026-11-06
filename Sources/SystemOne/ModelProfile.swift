@@ -108,9 +108,11 @@ public struct DecisionModelProfile: ModelProfile {
 
     public var markerText: String? { nil }
 
-    /// A text state as is; fields as a JSON object.
+    /// A text state as is; fields as a JSON object; no state as empty text.
     public func renderState(_ state: SystemOneState) -> String {
         switch state {
+        case .media:
+            return ""
         case .text(let text):
             return text
         case .fields(let fields):

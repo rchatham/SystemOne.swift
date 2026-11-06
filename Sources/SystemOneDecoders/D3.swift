@@ -105,9 +105,12 @@ public enum D3Prompt {
     static let defaultInstructions = "Choose the best matching option."
     static let closingLine = "Reply with only the code of the best option."
 
-    /// `describe(state)`: text verbatim; fields as `json.dumps(…, ensure_ascii=False)`.
+    /// `describe(state)`: text verbatim; fields as `json.dumps(…, ensure_ascii=False)`;
+    /// no state as empty text.
     static func describe(_ state: SystemOneState) -> String {
         switch state {
+        case .media:
+            return ""
         case .text(let text):
             return text
         case .fields(let fields):

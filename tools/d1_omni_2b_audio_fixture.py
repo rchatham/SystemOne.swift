@@ -22,7 +22,9 @@ trunk and vision tower are testdata/d1_2b_vision_tiny's.
   transformers' names (`lin_out` stored as a width-1 Conv1d); mlx/: mlx-vlm's names.
 - fixture.json: per synthetic clip (16-bit PCM from an integer formula), its
   resampled samples and log-mel features (summaries), and its projected features;
-  per request, its spoken questions' clips, the packed rows and answers.
+  per request, its spoken questions' clips, the packed rows and answers. A request
+whose state is None (a spoken state, a picture alone, or nothing) writes no state
+block and no `QUESTION:` header, as `prefix_text` and `question_header` do.
 
 A spoken question's instructions are its clip: `suffix_layout` writes `media.SPOKEN`
 in their place, `Reader.place` swaps in the clip's markup, and the engine fills each
@@ -146,6 +148,24 @@ REQUESTS = [
     ]),
     ("A photo of the shelf.", None, "small", [
         ("empty", {"type": "noul", "instructions": {"spoken": "ask2"}}),
+    ]),
+    # No state (`state=None`): the media alone is the state, and the questions follow it with no
+    # `QUESTION:` header. A spoken state is a clip alone.
+    (None, "call", None, [
+        ("refund", {"type": "noul", "instructions": "Does the caller want a refund?"}),
+        ("topic", {"type": "choice", "instructions": "What is the call about?",
+                   "criteria": {"billing": "Billing", "outage": None}}),
+        ("mood", {"type": "score", "instructions": "How upset is the caller?", "criteria": ["calm", "angry"]}),
+    ]),
+    (None, "speech", None, [
+        ("lang", {"type": "choice", "instructions": {"spoken": "ask"},
+                  "criteria": {"en": "English", "fr": "French"}}),
+    ]),
+    (None, None, "small", [
+        ("stocked", {"type": "noul", "instructions": "Is the shelf stocked?"}),
+    ]),
+    (None, None, None, [
+        ("wet", {"type": "noul", "instructions": "Is water wet?"}),
     ]),
 ]
 PICTURES = {"small": (200, 150, 21)}

@@ -14,9 +14,10 @@ public enum DecisionTunePrompt {
         reservedTokens.reduce(text) { $0.replacingOccurrences(of: $1, with: " ") }
     }
 
-    /// A text state as is; fields as `key: value | key: value`.
+    /// A text state as is; fields as `key: value | key: value`; no state as empty text.
     public static func stateText(_ state: SystemOneState) -> String {
         switch state {
+        case .media: return ""
         case .text(let text): return text
         case .fields(let fields): return fields.map { "\($0.key): \($0.value)" }.joined(separator: " | ")
         }

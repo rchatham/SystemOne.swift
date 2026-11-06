@@ -6,9 +6,12 @@ public enum VonPrompt {
     public static let defaultTrueDescription = "Yes, condition holds true."
     public static let defaultFalseDescription = "No, condition is false."
 
-    /// Text states pass through; ordered fields render as `key: value` lines.
+    /// Text states pass through; ordered fields render as `key: value` lines;
+    /// no state reads as empty text.
     public static func formatState(_ state: SystemOneState) -> String {
         switch state {
+        case .media:
+            return ""
         case .text(let text):
             return text
         case .fields(let fields):

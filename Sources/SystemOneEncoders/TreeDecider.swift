@@ -13,9 +13,10 @@ import SystemOne
 /// sees the state and itself, an option sees the state, its question, and itself.
 /// Positions follow the virtual pair.
 public enum TreeDeciderPrompt {
-    /// The state, or `"(empty)"` for an empty text or no fields; fields as compact JSON.
+    /// The state, or `"(empty)"` for an empty text, no fields or no state; fields as compact JSON.
     public static func stateText(_ state: SystemOneState) -> String {
         switch state {
+        case .media: return "(empty)"
         case .text(let text) where text.isEmpty: return "(empty)"
         case .fields(let fields) where fields.isEmpty: return "(empty)"
         default: return EncoderText.compactJSON(state)

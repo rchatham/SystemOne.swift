@@ -80,7 +80,7 @@ public final class D1Backend: DecisionBackend {
             }
             (mode, modeLength) = (.audio, configuration.audioTextLength)
             // Audio questions were trained with `{}` when the clip is the whole state.
-            if case .text("") = request.state { state = "{}" }
+            if request.state == .text("") || request.state == .media { state = "{}" }
         }
 
         let prefix = media.map { D1MediaPrefix(media: $0, length: D1Model.prefixLength(of: $0)) }

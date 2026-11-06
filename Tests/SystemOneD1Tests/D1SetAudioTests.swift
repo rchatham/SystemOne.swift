@@ -197,6 +197,25 @@ private enum D1SetAudioRequests {
         SystemOneRequest(state: .text("A photo of the shelf."), questions: [
             QuestionEntry(id: "empty", question: .noul(Noul(instructions: ""))),
         ]),
+        // No state: the media alone (a spoken state, a picture) or nothing at all.
+        SystemOneRequest(state: .media, questions: [
+            QuestionEntry(id: "refund", question: .noul(Noul(instructions: "Does the caller want a refund?"))),
+            QuestionEntry(id: "topic", question: .choice(Choice(instructions: "What is the call about?", criteria: [
+                ChoiceOption(key: "billing", description: "Billing"), ChoiceOption(key: "outage"),
+            ]))),
+            QuestionEntry(id: "mood", question: .score(Score(instructions: "How upset is the caller?", criteria: [.text("calm"), .text("angry")]))),
+        ]),
+        SystemOneRequest(state: .media, questions: [
+            QuestionEntry(id: "lang", question: .choice(Choice(instructions: "", criteria: [
+                ChoiceOption(key: "en", description: "English"), ChoiceOption(key: "fr", description: "French"),
+            ]))),
+        ]),
+        SystemOneRequest(state: .media, questions: [
+            QuestionEntry(id: "stocked", question: .noul(Noul(instructions: "Is the shelf stocked?"))),
+        ]),
+        SystemOneRequest(state: .media, questions: [
+            QuestionEntry(id: "wet", question: .noul(Noul(instructions: "Is water wet?"))),
+        ]),
     ]
 }
 
@@ -239,6 +258,27 @@ final class D1SetAudioTests: XCTestCase {
             let voices = plan.rows.flatMap(\.voices)
             XCTAssertEqual(voices, request.questions.compactMap { reference.voices[$0.id].map { D1SetAudioFixture.clip(fixture.clips[$0]!.source) } })
         }
+    }
+
+    func testNoStateWritesNoStateBlockOrHeader() throws {
+        let fixture = try D1SetAudioFixture.load()
+        let c = fixture.configuration
+        // `prefix_text(None, ...)` and `question_header(None)`.
+        XCTAssertEqual(D1SetPrompt.prefix(state: .media, configuration: c, images: "M"), "<|startoftext|><|im_start|>user\nM")
+        XCTAssertEqual(D1SetPrompt.questionHeader(state: .media), "")
+        XCTAssertEqual(D1SetPrompt.questionHeader(state: .text("")), "QUESTION:\n")
+        XCTAssertEqual(
+            D1SetPrompt.prefix(state: .text(""), configuration: c, images: "M"), "<|startoftext|><|im_start|>user\nM\n\n\nQUESTION:\n"
+        )
+        // d1-3B's port writes the same: the question follows its pictures.
+        XCTAssertEqual(D1ChatPrompt.prefix(state: .media, images: "M"), "<|im_start|>user\nM")
+        XCTAssertEqual(D1ChatPrompt.prefix(state: .text("x"), images: "M"), "<|im_start|>user\nMx\n\n\nQUESTION:\n")
+        // A spoken state's rows: the state is the markup alone.
+        let plan = try planner(fixture).plan(D1SetAudioRequests.requests[8], media: fixture.media(fixture.requests[8]))
+        let clip = try LFM3AudioEncoder.featureCount(
+            of: D1SetAudioFixture.clip(fixture.clips["call"]!.source), configuration: LFM3AudioConfiguration(modelFolder: D1SetAudioFixture.folder)
+        )
+        XCTAssertEqual(plan.rows.map(\.stateLength), [clip + 9, clip + 9])
     }
 
     func testSpokenQuestionsNeedAnEarAndNoWrittenInstructions() async throws {
