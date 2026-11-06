@@ -18,10 +18,12 @@ public struct D1SetConfiguration: Equatable, Sendable {
     public let defaultTemperature: Double
     /// Per bucket: `noul`, `score:k`, `choice:small|mid|large|inventory`.
     public let temperatures: [String: Double]
+    /// Pixels a picture may have before the processor (`d1_vision_max_pixels`).
+    public let visionMaxPixels: Int
 
     public init(
         setSize: Int = 4, codeScheme: Int = 1, bos: String = "", specialTokens: [String] = [],
-        defaultTemperature: Double = 1, temperatures: [String: Double] = [:]
+        defaultTemperature: Double = 1, temperatures: [String: Double] = [:], visionMaxPixels: Int = 1024 * 1024
     ) {
         self.setSize = setSize
         self.codeScheme = codeScheme
@@ -29,6 +31,7 @@ public struct D1SetConfiguration: Equatable, Sendable {
         self.specialTokens = specialTokens
         self.defaultTemperature = defaultTemperature
         self.temperatures = temperatures
+        self.visionMaxPixels = visionMaxPixels
     }
 
     /// Reads `config.json`, `tokenizer_config.json`, `tokenizer.json`, and
@@ -72,7 +75,8 @@ public struct D1SetConfiguration: Equatable, Sendable {
             bos: text(tokenizerConfig["bos_token"]) ?? "",
             specialTokens: specials.sorted(),
             defaultTemperature: (calibration["default"] as? NSNumber)?.doubleValue ?? 1,
-            temperatures: (calibration["temperatures"] as? [String: Any] ?? [:]).compactMapValues { ($0 as? NSNumber)?.doubleValue }
+            temperatures: (calibration["temperatures"] as? [String: Any] ?? [:]).compactMapValues { ($0 as? NSNumber)?.doubleValue },
+            visionMaxPixels: config["d1_vision_max_pixels"] as? Int ?? 1024 * 1024
         )
     }
 
@@ -150,9 +154,10 @@ public enum D1SetPrompt {
         return String(result)
     }
 
-    /// The row's head: BOS, the user turn, the state, and the first `QUESTION:`.
-    public static func prefix(state: SystemOneState, configuration: D1SetConfiguration) -> String {
-        configuration.bos + "<|im_start|>user\n"
+    /// The row's head: BOS, the user turn, the pictures' markup (`images`, not
+    /// escaped), the state, and the first `QUESTION:`.
+    public static func prefix(state: SystemOneState, configuration: D1SetConfiguration, images: String = "") -> String {
+        configuration.bos + "<|im_start|>user\n" + images
             + plain(D1ChatPrompt.stateBlock(state), specialTokens: configuration.specialTokens) + "\n" + header
     }
 
@@ -219,6 +224,8 @@ public struct D1SetRow: PlannedRow, Equatable, Sendable {
     public let ends: [Int]
     /// Each question's token groups, one per option.
     public let groups: [[[Int]]]
+    /// The capped pictures whose features fill the state's `<|image|>` tokens.
+    public let images: [RGBImage]
 
     public var sequenceLength: Int { ids.count }
     public var logitCount: Int { groups.reduce(0) { $0 + $1.count } }
@@ -233,35 +240,71 @@ public struct D1SetRow: PlannedRow, Equatable, Sendable {
 }
 
 /// d1-2B (`LiquidAI/d1-2B`, LFM3) as a System One backend for noul, choice,
-/// and score questions on text states, under its `set` attention: up to
-/// `d1_set_size` questions share one row after the state, read at their own
-/// slots through the tied head, with `calibration.json`'s temperature.
-/// Pictures, audio, and the typed questions (multiple choice, extraction,
+/// and score questions, under its `set` attention: up to `d1_set_size`
+/// questions share one row after the state, read at their own slots through
+/// the tied head, with `calibration.json`'s temperature.
+///
+/// Pictures (`SystemOneMedia.images`) are capped at `d1_vision_max_pixels`
+/// (Pillow's bicubic), written before the state as
+/// `<|vision_start|><|image|>…<|vision_end|>`, and encoded once by LFM3-VL's
+/// tower; their features fill the state's `<|image|>` tokens in every row.
+/// Audio, video, and the typed questions (multiple choice, extraction,
 /// estimates, boxes) are not supported yet.
 public final class D1SetBackend: DecisionBackend {
     public let modelID: String
     public let configuration: D1SetConfiguration
     let tokenizer: DecoderTokenizer
+    /// The image processor's settings; `nil` for a text-only checkpoint.
+    let visionConfiguration: LFM3VLVisionConfiguration?
     private let trunk: LFM3Trunk?
+    private let vision: LFM3VLVision?
+    private let lock = NSLock()
+    /// The last pictures encoded, kept for the next microbatch of the same request.
+    private var featureCache: (images: [RGBImage], features: MLXArray)?
 
     public convenience init(modelFolder: URL, modelID: String = "d1-2B", dataType: DType = .bfloat16) throws {
+        let data = try Data(contentsOf: modelFolder.appendingPathComponent("config.json"))
+        let config = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let store = try SafetensorsCheckpoint(modelFolder: modelFolder)
+        let visionConfiguration = try config["vision_config"] == nil ? nil : LFM3VLVisionConfiguration(modelFolder: modelFolder)
+        let vision = try visionConfiguration.map { try LFM3VLVision(store: store, configuration: $0, dataType: dataType) }
         self.init(
             modelID: modelID,
             configuration: try D1SetConfiguration(modelFolder: modelFolder),
             tokenizer: try HubDecoderTokenizer(folder: modelFolder),
-            trunk: try LFM3Trunk(modelFolder: modelFolder, dataType: dataType)
+            trunk: try LFM3Trunk(store: store, configuration: LFM3Configuration(modelFolder: modelFolder), dataType: dataType),
+            visionConfiguration: visionConfiguration, vision: vision
         )
     }
 
-    init(modelID: String, configuration: D1SetConfiguration, tokenizer: DecoderTokenizer, trunk: LFM3Trunk?) {
+    init(
+        modelID: String, configuration: D1SetConfiguration, tokenizer: DecoderTokenizer, trunk: LFM3Trunk?,
+        visionConfiguration: LFM3VLVisionConfiguration? = nil, vision: LFM3VLVision? = nil
+    ) {
         self.modelID = modelID
         self.configuration = configuration
         self.tokenizer = tokenizer
         self.trunk = trunk
+        self.visionConfiguration = vision?.configuration ?? visionConfiguration
+        self.vision = vision
     }
 
     public func plan(_ request: SystemOneRequest, media: SystemOneMedia?) throws -> DecisionPlan<D1SetRow> {
-        guard media == nil else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+        var images: [RGBImage] = []
+        var markup = ""
+        var placeholders = 0
+        if let media {
+            guard case .images(let pictures) = media, let settings = visionConfiguration else {
+                throw SystemOneEngineError.unsupportedMedia(model: modelID)
+            }
+            images = pictures.map { D1ChatPrompt.capPixels($0, limit: configuration.visionMaxPixels) }
+            for image in images {
+                let size = try LFM3VLVision.smartResize(height: image.height, width: image.width, configuration: settings)
+                let count = LFM3VLVision.featureCount(height: size.height, width: size.width, configuration: settings)
+                markup += LFM3VLVision.markup(featureCount: count)
+                placeholders += count
+            }
+        }
         var suffixes: [String] = []
         var readouts: [[[Int]]] = []
         for entry in request.questions {
@@ -276,7 +319,7 @@ public final class D1SetBackend: DecisionBackend {
                 throw SystemOneEngineError.invalidQuestion(id: entry.id, reason: error.localizedDescription)
             }
         }
-        let prefix = D1SetPrompt.prefix(state: request.state, configuration: configuration)
+        let prefix = D1SetPrompt.prefix(state: request.state, configuration: configuration, images: markup)
         var rows: [D1SetRow] = []
         var decisions: [PlannedDecision] = []
         for start in stride(from: 0, to: suffixes.count, by: configuration.setSize) {
@@ -292,6 +335,13 @@ public final class D1SetBackend: DecisionBackend {
                 ids += own
                 questions += Array(repeating: offset + 1, count: own.count)
                 ends.append(ids.count - 1)
+            }
+            // Every row repeats the state, and with it each picture's tokens.
+            if let token = visionConfiguration?.imageTokenID, !images.isEmpty {
+                let found = ids.filter { $0 == token }.count
+                guard found == placeholders else {
+                    throw D1ChatError.imagePlaceholders(expected: placeholders, found: found)
+                }
             }
             var logitOffset = 0
             for member in members {
@@ -310,7 +360,7 @@ public final class D1SetBackend: DecisionBackend {
             }
             rows.append(D1SetRow(
                 ids: ids, stateLength: stateLength, questions: questions, ends: ends,
-                groups: members.map { readouts[$0] }
+                groups: members.map { readouts[$0] }, images: images
             ))
         }
         return DecisionPlan(rows: rows, decisions: decisions, usage: Usage(inputTokens: rows.reduce(0) { $0 + $1.ids.count }))
@@ -331,7 +381,8 @@ public final class D1SetBackend: DecisionBackend {
         let width = lengths.max() ?? 0
         let hidden = try trunk(
             rows.map { $0.ids + Array(repeating: 0, count: width - $0.ids.count) },
-            attention: DecoderAttention(lengths: lengths, plan: .visible(rows.map(\.visibility)))
+            attention: DecoderAttention(lengths: lengths, plan: .visible(rows.map(\.visibility))),
+            features: try imageFeatures(rows)
         )
         let slots = rows.enumerated().flatMap { index, row in row.ends.map { Int32(index * width + $0) } }
         let states = hidden.reshaped(-1, hidden.dim(-1)).take(MLXArray(slots), axis: 0).asType(.float32)
@@ -346,6 +397,40 @@ public final class D1SetBackend: DecisionBackend {
                 return question.map { group in group.map { scores[base + column[$0]!] }.max() ?? -.infinity }
             }
         }
+    }
+
+    /// Each row's pictures' features, every picture set encoded once; `nil`
+    /// when no row has pictures.
+    private func imageFeatures(_ rows: [D1SetRow]) throws -> DecoderFeatures? {
+        guard let token = visionConfiguration?.imageTokenID, rows.contains(where: { !$0.images.isEmpty }) else { return nil }
+        guard let vision else { throw SystemOneEngineError.unsupportedMedia(model: modelID) }
+        var encoded: [(images: [RGBImage], features: MLXArray)] = []
+        var features: [MLXArray?] = []
+        for row in rows {
+            guard !row.images.isEmpty else {
+                features.append(nil)
+                continue
+            }
+            if let known = encoded.first(where: { $0.images == row.images }) {
+                features.append(known.features)
+                continue
+            }
+            let value = try encode(row.images, vision: vision)
+            encoded.append((images: row.images, features: value))
+            features.append(value)
+        }
+        return DecoderFeatures(token: token, rows: features)
+    }
+
+    /// `images`' features one after another, reusing the last pictures encoded.
+    private func encode(_ images: [RGBImage], vision: LFM3VLVision) throws -> MLXArray {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = featureCache, cached.images == images { return cached.features }
+        let parts = try images.map { try vision($0) }
+        let value = parts.count == 1 ? parts[0] : concatenated(parts, axis: 0)
+        featureCache = (images: images, features: value)
+        return value
     }
 }
 

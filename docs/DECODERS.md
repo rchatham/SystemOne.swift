@@ -257,6 +257,34 @@ It has the triangle and Keys cubic (a = −0.5) filters.
 `tools/resize_fixture.py` records both libraries' outputs, and
 `tools/d1_3b_vision_fixture.py` the processor's views (see [D1](D1.md)).
 
+## LFM3-VL pictures (`LFM3VLVision`)
+
+`LFM3VLVision` is LFM3-VL's image path. It follows transformers' LFM3-VL code,
+as vendored with d1-2B, and mlx-vlm's `lfm3_vl` port. It is used by d1-2B.
+- **Processor:**
+  - A smart resize to multiples of 32 pixels within
+    `[min_pixels, max_pixels]`, with torchvision's uint8 bicubic kernel.
+    Aspect ratios past 200 are refused.
+  - 16-pixel patches in 2 × 2 merge-block order, each repeated over the
+    temporal patch of 2.
+  - `markup` writes `<|vision_start|>`, one `<|image|>` per merge block, and
+    `<|vision_end|>`.
+- **Tower:**
+  - A linear patchifier and an RMSNorm.
+  - Then layers that are either a gated depthwise 3 × 3 convolution over the
+    raster patch grid (`out(C · conv(B · x))`) or bidirectional grouped-query
+    attention. The attention has RMSNorm on query and key heads and axial RoPE
+    over the patch's row and column.
+  - A SwiGLU block follows each layer.
+- **Projector:** a layer norm per patch, each merge block's four patches side by
+  side, and two linear layers with GELU.
+- **Weights:** transformers' `model.vision_tower.` and
+  `model.multi_modal_projector.` with `[hidden, 1, k, k]` kernels, or
+  mlx-vlm's names with `[hidden, k, k, 1]`.
+
+`LFM3Trunk` takes the features through `DecoderFeatures`, as `LFM2Trunk`
+does.
+
 ## LFM3 (`LFM3Trunk`)
 
 `LFM3Trunk` is d1-2B's backbone. It follows mlx-vlm's Apache-2.0 `lfm3` port

@@ -8,6 +8,13 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ### Added
 
+- d1-2B pictures: `D1SetBackend` takes `SystemOneMedia.images`.
+  - Pictures are capped at `d1_vision_max_pixels` with Pillow's bicubic filter
+    and written as `<|vision_start|><|image|>…<|vision_end|>` before the state.
+  - They are encoded once by the new `LFM3VLVision` (LFM3-VL's processor,
+    gated-convolution and axial-RoPE tower, and projector), and their features
+    fill every set row's `<|image|>` tokens. `LFM3Trunk` takes
+    `DecoderFeatures`.
 - d1-3B pictures: `D1ChatBackend` takes `SystemOneMedia.images`.
   - Pictures are capped at one megapixel with Pillow's bicubic filter and
     written as LFM2-VL's `<image>` markup before the state.
