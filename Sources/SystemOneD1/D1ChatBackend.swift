@@ -68,18 +68,21 @@ public enum D1ChatPrompt {
         }
     }
 
-    /// Native letters when every label is one letter, else `A`…`Z`, else `00`….
-    static func optionCodes(_ labels: [String]) -> [String] {
+    /// Native letters when every label is one letter, else `A`…`Z`, else the
+    /// checkpoint's `d1_codes` scheme: `00`… (1, d1-3B) or `AA`, `AB`… (2, d1-2B).
+    static func optionCodes(_ labels: [String], scheme: Int = 1) -> [String] {
         let stripped = labels.map(PythonSemantics.pythonStrip)
         if !stripped.isEmpty, stripped.allSatisfy({ $0.unicodeScalars.count == 1 && $0.first!.isLetter }) {
             return stripped
         }
-        if labels.count <= 26 { return labels.indices.map { String(UnicodeScalar(UInt8(65 + $0))) } }
+        let letters = (65...90).map { String(UnicodeScalar(UInt8($0))) }
+        if labels.count <= 26 { return Array(letters.prefix(labels.count)) }
+        if scheme == 2 { return Array((letters + letters.flatMap { a in letters.map { a + $0 } }).prefix(labels.count)) }
         return labels.indices.map { String(format: "%02d", $0) }
     }
 
     /// A distinct single-token code and its token for every label.
-    static func aliases(_ labels: [String], tokenizer: DecoderTokenizer) throws -> [(code: String, token: Int)] {
+    static func aliases(_ labels: [String], tokenizer: DecoderTokenizer, scheme: Int = 1) throws -> [(code: String, token: Int)] {
         var used = Set<Int>()
         var out: [(code: String, token: Int)] = []
         func take(_ raw: String) -> Bool {
@@ -89,7 +92,7 @@ public enum D1ChatPrompt {
             used.insert(ids[0])
             return true
         }
-        for code in optionCodes(labels) where !take(code) {
+        for code in optionCodes(labels, scheme: scheme) where !take(code) {
             guard fallbackPool.contains(where: take) else { throw D1ChatError.noAlias(options: labels.count) }
         }
         return out
@@ -106,7 +109,7 @@ public enum D1ChatPrompt {
     }
 
     /// The token groups scored for each option (max-pooled), and the choice codes.
-    public static func readout(_ question: Question, tokenizer: DecoderTokenizer) throws -> (groups: [[Int]], codes: [String]) {
+    public static func readout(_ question: Question, tokenizer: DecoderTokenizer, scheme: Int = 1) throws -> (groups: [[Int]], codes: [String]) {
         switch question {
         case .noul:
             let yes = singleTokens(yesForms, tokenizer: tokenizer), no = singleTokens(noForms, tokenizer: tokenizer)
@@ -117,7 +120,7 @@ public enum D1ChatPrompt {
             guard groups.allSatisfy({ !$0.isEmpty }) else { throw D1ChatError.noDigitTokens(levels: score.criteria.count) }
             return (groups, [])
         case .choice(let choice):
-            let codes = try aliases(choice.criteria.map(\.key), tokenizer: tokenizer)
+            let codes = try aliases(choice.criteria.map(\.key), tokenizer: tokenizer, scheme: scheme)
             let groups = codes.map { code in
                 [code.token] + singleTokens([" \(code.code)"], tokenizer: tokenizer).filter { $0 != code.token }
             }
