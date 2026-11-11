@@ -105,7 +105,17 @@ def rows(tensor) -> list[list[float]]:
 
 
 def load_reference(folder: Path, torch):
-    """The exact reference: bf16 base, peft merge, fp32 SSM parameters, fp32 compute."""
+    """The exact reference: bf16 base, peft merge, fp32 SSM parameters, fp32 compute.
+
+    The merged weights stay bfloat16 in memory. Every decoder layer, the final
+    norm and the rotary embedding are upcast to float32 only while they run,
+    and the embedding's looked-up rows are cast instead of its whole table.
+    bf16 -> fp32 -> bf16 is lossless, so this computes the same float32 forward
+    as ``model.float()`` with about half the memory (JEV-9B: ~17 GB instead of
+    ~38 GB). ``lm_head`` is dropped; decisions read the final-norm state.
+    ``tiny --check`` reproducing the committed fixture byte for byte is the
+    evidence that the two are equivalent.
+    """
     from peft import PeftModel
     from safetensors.torch import load_file
     from transformers import AutoModelForCausalLM
@@ -120,14 +130,36 @@ def load_reference(folder: Path, torch):
         for name, value in load_file(folder / shard).items():
             if name in stored:
                 stored[name] = value
-    model = PeftModel.from_pretrained(base, str(folder), subfolder="adapter").merge_and_unload()
-    model = model.float().eval()
+    model = PeftModel.from_pretrained(base, str(folder), subfolder="adapter").merge_and_unload().eval()
+    model.lm_head = None
     params = dict(model.named_parameters())
     with torch.no_grad():
         for name, value in stored.items():
             assert value is not None and value.dtype == torch.float32, name
-            params[name].copy_(value)
+            params[name].data = value
+    inner = model.model
+    # A bf16 row read as float32 is exact, so cast the looked-up rows rather
+    # than the whole 248k-row table.
+    inner.embed_tokens.register_forward_hook(lambda _m, _args, out: out.float())
+    for module in [*inner.layers, inner.norm, inner.rotary_emb]:
+        _upcast_while_running(module, torch)
     return model
+
+
+def _upcast_while_running(module, torch) -> None:
+    """Hold ``module``'s bf16 tensors as float32 for the duration of its forward."""
+    slots = [(table, key)
+             for owner in module.modules()
+             for table in (owner._parameters, owner._buffers)
+             for key, value in table.items()
+             if value is not None and value.dtype == torch.bfloat16]
+
+    def cast(dtype):
+        for table, key in slots:
+            table[key].data = table[key].data.to(dtype)
+
+    module.register_forward_pre_hook(lambda _m, _args: cast(torch.float32))
+    module.register_forward_hook(lambda _m, _args, _out: cast(torch.bfloat16))
 
 
 def head_logits(folder: Path, hidden, torch) -> list[float]:
@@ -336,8 +368,8 @@ def tiny_fixture(folder: Path) -> dict:
         lora_a = adapter[f"base_model.model.{stem}.lora_A.weight"]
         lora_b = adapter[f"base_model.model.{stem}.lora_B.weight"]
         expected = (base_tensors[name].float() + scale * (lora_b @ lora_a)).to(torch.bfloat16).float()
-        assert torch.equal(merged[name].detach(), expected), f"peft merge differs from bf16(W + s*B@A) for {name}"
-        flat = merged[name].detach().reshape(-1)
+        assert torch.equal(merged[name].detach().float(), expected), f"peft merge differs from bf16(W + s*B@A) for {name}"
+        flat = merged[name].detach().float().reshape(-1)
         indices = sorted({0, 1, 17, flat.numel() // 3, flat.numel() // 2, flat.numel() - 1})
         merge_probes[name] = {
             "indices": indices,

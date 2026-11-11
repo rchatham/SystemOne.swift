@@ -18,6 +18,9 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   - `JEVArtifacts.jev9B` pins the five shards, the adapter and the head.
   - On a tiny transformers + peft reference it matches within 1.1e-5
     relative at float32 (`tools/jev_golden_capture.py`).
+  - On the real JEV-9B weights in bfloat16, decision probabilities stay
+    within 0.0055 of the float32 reference (`testdata/jev_golden_v1.json`).
+    Tokenizer ids and prompts match exactly.
 - `LoRAAdapter`: a peft LoRA merged into `Qwen35Trunk`'s linear layers as they
   load, exactly as `merge_and_unload` does onto the stored base. Plain LoRA
   only, and every adapter tensor must be used.

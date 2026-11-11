@@ -257,13 +257,21 @@ CPU float32, as the oracle. Its reference is exact:
 - `A_log` and the gated-norm weights at their stored float32 values;
 - float32 compute.
 
+The merged weights stay bf16 in memory, and each decoder layer is upcast to
+float32 only while it runs. This is lossless, so it computes the same forward
+pass as `model.float()`. The `tiny` fixture regenerates byte for byte either
+way. It holds JEV-9B in about 17 GB instead of 38 GB.
+
 It writes two fixtures:
 - **`tiny`** (committed, 435 KB): a seeded random Qwen3.5 in JEV-9B's exact
   layout, with two bf16 shards behind an index, an fp32 peft adapter, a
   24-slot head and the JSON configs. It regenerates byte for byte
   (`tiny --check`).
-- **`full`** (needs the snapshot): tokenizer ids, prompts, a final-norm probe,
-  head logits, and calibrated probabilities for the model card's examples.
+- **`full`** (committed, 88 KB, written from the pinned snapshot): tokenizer
+  ids, prompts, per-layer trunk probes, head logits, and calibrated
+  probabilities for eight cases. These include the model card's refund noul
+  (0.991 true) and supplier choice (0.527 `dual_source`), which the reference
+  reproduces.
 
 | Check | Float32, GPU / CPU |
 |---|---|
@@ -272,10 +280,19 @@ It writes two fixtures:
 | Tiny right-padded batch vs single rows | 1e-4 relative bound |
 | Tiny bf16 vs float32 (noul probability) | 0.031 / 0.014 |
 
+| JEV-9B check (GPU) | Result |
+|---|---|
+| Tokenizer ids (15 texts) and `bare-v1` prompts (8 cases) | exact |
+| bfloat16 decision probabilities vs the float32 reference | worst 0.0055 (bound 0.02); clear top answers kept |
+| `SystemOneEngine.jev` on the refund example | P(true) 0.991 ± 0.02 |
+| Float32 states, head logits and probabilities | not run yet; needs about 34 GB free |
+
 ```bash
 # Full model: download, write the fixture, then check tokenizer, prompts and weights
-hf download autotrust/JEV-9B --revision 7ac669b8fb476ba926491e3d1c39f9330d68dbed \
-  --include "*.json" "*.jinja" "model-*.safetensors" "head.safetensors" "adapter/*" --local-dir weights/JEV-9B
+hf download autotrust/JEV-9B --revision 7ac669b8fb476ba926491e3d1c39f9330d68dbed --local-dir weights/JEV-9B \
+  config.json judge_config.json calibration.json tokenizer.json tokenizer_config.json chat_template.jinja \
+  model.safetensors.index.json model-0000{1..5}-of-00005.safetensors head.safetensors \
+  adapter/adapter_config.json adapter/adapter_model.safetensors
 .venv-jev/bin/python tools/jev_golden_capture.py full --model-folder weights/JEV-9B
 JEV_MODEL_FOLDER="$PWD/weights/JEV-9B" SYSTEMONE_MLX_TESTS=1 SYSTEMONE_MLX_DEVICE=gpu \
   xcrun xctest -XCTest SystemOneDecodersTests.JEVFullModelTests "$PWD/.build/xcode/Build/Products/Debug/SystemOneDecodersTests.xctest"
