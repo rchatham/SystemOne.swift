@@ -67,6 +67,9 @@ final class JEVFullModelTests: XCTestCase {
     }
 
     func testFinalStatesHeadAndDecisionsMatchTransformersAtFloat32() throws {
+        // Skip before touching MLX: a SwiftPM build has no Metal library.
+        _ = try Self.modelFolder()
+        try Self.requireMLX()
         let fixture = try JEVFullFixture.load()
         try Device.withDefaultDevice(Self.device) {
             let backend = try Self.backend(.float32)
@@ -92,6 +95,8 @@ final class JEVFullModelTests: XCTestCase {
     }
 
     func testBFloat16DecisionsStayCloseAndKeepClearAnswers() throws {
+        _ = try Self.modelFolder()
+        try Self.requireMLX()
         let fixture = try JEVFullFixture.load()
         try Device.withDefaultDevice(Self.device) {
             let backend = try Self.backend(.bfloat16)
