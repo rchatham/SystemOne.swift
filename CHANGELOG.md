@@ -6,6 +6,8 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-12
+
 ### Added
 
 - Video: `SystemOneMedia.video(VideoClip)` (decoded frames and their fps),
@@ -177,6 +179,17 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 - `Examples/SystemOneHarness` (formerly `VonHarness`), a SwiftUI app that loads the verified weights on an
   iPhone or iPad and reports `systemOne` answers, latency, and memory.
 - CI build of the harness for generic iOS devices.
+- `SystemOneChat`, a chatbot whose control flow is a System One model.
+  - Each step asks one `choice` question about the user's message, with every
+    tool an option and `generate_text` last as the catch-all.
+  - Replies come from a `TextGenerator`: Apple Intelligence through
+    FoundationModels on macOS and iOS 26 or later.
+  - `maxActionsPerTurn` defaults to 1, because d1 cannot tell when a turn is
+    finished.
+  - `HTTPDecider` asks a `system-one serve` endpoint instead of a local model,
+    for the iOS Simulator, where MLX cannot run.
+- `system-one-chat`, a command-line chat over a local d1 folder.
+- `Examples/SystemOneChatApp`, a SwiftUI chat app for iPhone, iPad, and Mac.
 
 ### Changed
 
@@ -246,4 +259,6 @@ against the Python reference at every stage.
 - Apache-2.0 with attribution in `THIRD_PARTY_NOTICES.md`. Model weights are
   user-generated via `tools/download_model.py` + `tools/convert_option_marker.py`.
 
+[Unreleased]: https://github.com/rchatham/SystemOne.swift/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/rchatham/SystemOne.swift/releases/tag/0.2.0
 [0.1.0]: https://github.com/rchatham/SystemOne.swift/releases/tag/0.1.0
