@@ -1,0 +1,487 @@
+{
+ "format": "d1_3b_tiny",
+ "version": 1,
+ "metadata": {
+  "torch": "2.15.0",
+  "transformers": "5.22.1"
+ },
+ "bos": 1,
+ "table": {
+  "yes": 100,
+  "Yes": 101,
+  "YES": 102,
+  "no": 103,
+  "No": 104,
+  "NO": 105,
+  " A": 106,
+  " B": 107,
+  " C": 108,
+  " x": 109
+ },
+ "requests": [
+  {
+   "state": "Order #4821 was charged twice.\nPlease help!",
+   "prefix": "<|im_start|>user\nOrder #4821 was charged twice.\nPlease help!\n\n\nQUESTION:\n",
+   "prefix_tokens": 74,
+   "questions": [
+    {
+     "id": "team",
+     "question": {
+      "type": "choice",
+      "instructions": "Which team should handle this?",
+      "criteria": {
+       "billing": "Charges",
+       "tech_support": null,
+       "shipping": ""
+      }
+     },
+     "suffix": "Which team should handle this?\n\nOptions:\nA Charges\nB tech support\nC shipping\n\nReply with the option code only.<|im_end|>\n<|im_start|>assistant\n",
+     "codes": [
+      "A",
+      "B",
+      "C"
+     ],
+     "groups": [
+      [
+       65,
+       106
+      ],
+      [
+       66,
+       107
+      ],
+      [
+       67,
+       108
+      ]
+     ],
+     "tokens": 143,
+     "answer": {
+      "type": "choice",
+      "choice": "billing",
+      "confidence": 0.5433639329888427,
+      "probabilities": {
+       "billing": 0.5433639329888427,
+       "tech_support": 0.07166730492436622,
+       "shipping": 0.38496876208679115
+      }
+     }
+    },
+    {
+     "id": "refund",
+     "question": {
+      "type": "noul",
+      "instructions": "Is this a refund request?"
+     },
+     "suffix": "Is this a refund request?\n\nReply with yes or no only.<|im_end|>\n<|im_start|>assistant\n",
+     "codes": [],
+     "groups": [
+      [
+       100,
+       101,
+       102
+      ],
+      [
+       103,
+       104,
+       105
+      ]
+     ],
+     "tokens": 86,
+     "answer": {
+      "type": "noul",
+      "noul": 0.3790154778766947
+     }
+    },
+    {
+     "id": "escalate",
+     "question": {
+      "type": "noul",
+      "instructions": "Escalate today?",
+      "criteria": {
+       "true": "Needs a human"
+      }
+     },
+     "suffix": "Escalate today?\nYes: Needs a human\nNo: None\n\nReply with yes or no only.<|im_end|>\n<|im_start|>assistant\n",
+     "codes": [],
+     "groups": [
+      [
+       100,
+       101,
+       102
+      ],
+      [
+       103,
+       104,
+       105
+      ]
+     ],
+     "tokens": 104,
+     "answer": {
+      "type": "noul",
+      "noul": 0.3796410224921571
+     }
+    },
+    {
+     "id": "urgency",
+     "question": {
+      "type": "score",
+      "instructions": "How urgent is it?",
+      "criteria": [
+       "low",
+       "medium",
+       "high"
+      ]
+     },
+     "suffix": "How urgent is it?\n\n0 low\n1 medium\n2 high\n\nReply with a single digit 0-2 only.<|im_end|>\n<|im_start|>assistant\n",
+     "codes": [],
+     "groups": [
+      [
+       48
+      ],
+      [
+       49
+      ],
+      [
+       50
+      ]
+     ],
+     "tokens": 110,
+     "answer": {
+      "type": "score",
+      "score": 0.2190277042602779,
+      "confidence": 0.7977257709719915,
+      "probabilities": {
+       "0": 0.7977257709719915,
+       "1": 0.185520753795739,
+       "2": 0.016753475232269437
+      },
+      "legend": {
+       "0": "low",
+       "1": "medium",
+       "2": "high"
+      }
+     }
+    },
+    {
+     "id": "letters",
+     "question": {
+      "type": "choice",
+      "instructions": "Which one?",
+      "criteria": {
+       "x": "X ray",
+       "y": null
+      }
+     },
+     "suffix": "Which one?\n\nOptions:\nx X ray\ny y\n\nReply with the option code only.<|im_end|>\n<|im_start|>assistant\n",
+     "codes": [
+      "x",
+      "y"
+     ],
+     "groups": [
+      [
+       20,
+       109
+      ],
+      [
+       21
+      ]
+     ],
+     "tokens": 99,
+     "answer": {
+      "type": "choice",
+      "choice": "x",
+      "confidence": 0.96019863564289,
+      "probabilities": {
+       "x": 0.96019863564289,
+       "y": 0.03980136435711006
+      }
+     }
+    }
+   ]
+  },
+  {
+   "state": {
+    "ticket": "Charged twice",
+    "tier": "gold ✨"
+   },
+   "prefix": "<|im_start|>user\n{\n  \"ticket\": \"Charged twice\",\n  \"tier\": \"gold ✨\"\n}\n\n\nQUESTION:\n",
+   "prefix_tokens": 0,
+   "questions": [
+    {
+     "id": "many",
+     "question": {
+      "type": "choice",
+      "instructions": "Pick the topic.",
+      "criteria": {
+       "opt0": "Topic 0",
+       "opt1": "Topic 1",
+       "opt2": "Topic 2",
+       "opt3": "Topic 3",
+       "opt4": "Topic 4",
+       "opt5": "Topic 5",
+       "opt6": "Topic 6",
+       "opt7": "Topic 7",
+       "opt8": "Topic 8",
+       "opt9": "Topic 9",
+       "opt10": "Topic 10",
+       "opt11": "Topic 11",
+       "opt12": "Topic 12",
+       "opt13": "Topic 13",
+       "opt14": "Topic 14",
+       "opt15": "Topic 15",
+       "opt16": "Topic 16",
+       "opt17": "Topic 17",
+       "opt18": "Topic 18",
+       "opt19": "Topic 19",
+       "opt20": "Topic 20",
+       "opt21": "Topic 21",
+       "opt22": "Topic 22",
+       "opt23": "Topic 23",
+       "opt24": "Topic 24",
+       "opt25": "Topic 25",
+       "opt26": "Topic 26",
+       "opt27": "Topic 27"
+      }
+     },
+     "suffix": "Pick the topic.\n\nOptions:\nA Topic 0\nB Topic 1\nC Topic 2\nD Topic 3\nE Topic 4\nF Topic 5\nG Topic 6\nH Topic 7\nI Topic 8\nJ Topic 9\nK Topic 10\nL Topic 11\nM Topic 12\nN Topic 13\nO Topic 14\nP Topic 15\nQ Topic 16\nR Topic 17\nS Topic 18\nT Topic 19\nU Topic 20\nV Topic 21\nW Topic 22\nX Topic 23\nY Topic 24\nZ Topic 25\na Topic 26\nb Topic 27\n\nReply with the option code only.<|im_end|>\n<|im_start|>assistant\n",
+     "codes": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H",
+      "I",
+      "J",
+      "K",
+      "L",
+      "M",
+      "N",
+      "O",
+      "P",
+      "Q",
+      "R",
+      "S",
+      "T",
+      "U",
+      "V",
+      "W",
+      "X",
+      "Y",
+      "Z",
+      "a",
+      "b"
+     ],
+     "groups": [
+      [
+       65,
+       106
+      ],
+      [
+       66,
+       107
+      ],
+      [
+       67,
+       108
+      ],
+      [
+       68
+      ],
+      [
+       69
+      ],
+      [
+       70
+      ],
+      [
+       71
+      ],
+      [
+       72
+      ],
+      [
+       73
+      ],
+      [
+       74
+      ],
+      [
+       75
+      ],
+      [
+       76
+      ],
+      [
+       77
+      ],
+      [
+       78
+      ],
+      [
+       79
+      ],
+      [
+       80
+      ],
+      [
+       81
+      ],
+      [
+       82
+      ],
+      [
+       83
+      ],
+      [
+       84
+      ],
+      [
+       85
+      ],
+      [
+       86
+      ],
+      [
+       87
+      ],
+      [
+       88
+      ],
+      [
+       89
+      ],
+      [
+       90
+      ],
+      [
+       97
+      ],
+      [
+       98
+      ]
+     ],
+     "tokens": 474,
+     "answer": {
+      "type": "choice",
+      "choice": "opt5",
+      "confidence": 0.3492084436864893,
+      "probabilities": {
+       "opt0": 0.08852001331719861,
+       "opt1": 0.011820327513271967,
+       "opt2": 0.06516307525018881,
+       "opt3": 0.03503307987622089,
+       "opt4": 0.0038641473808690087,
+       "opt5": 0.3492084436864893,
+       "opt6": 0.028215934905284727,
+       "opt7": 0.014388705643240426,
+       "opt8": 0.02954794520583313,
+       "opt9": 0.001339115838554512,
+       "opt10": 0.0060102583976491646,
+       "opt11": 0.04187378154780346,
+       "opt12": 0.014118546553535744,
+       "opt13": 0.0036300616831604626,
+       "opt14": 0.006574336670124323,
+       "opt15": 0.018447909691202507,
+       "opt16": 0.009303252464623858,
+       "opt17": 0.05818363319418313,
+       "opt18": 0.05054423644487357,
+       "opt19": 0.010152080624443914,
+       "opt20": 0.004814276988313909,
+       "opt21": 0.014649993322943703,
+       "opt22": 0.010179356885351742,
+       "opt23": 0.04069733752653515,
+       "opt24": 0.03600273902588791,
+       "opt25": 0.00589228409330848,
+       "opt26": 0.031517160652367426,
+       "opt27": 0.01030796561654023
+      }
+     }
+    }
+   ]
+  },
+  {
+   "state": "",
+   "prefix": "<|im_start|>user\n\n\n\nQUESTION:\n",
+   "prefix_tokens": 31,
+   "questions": [
+    {
+     "id": "tone",
+     "question": {
+      "type": "score",
+      "instructions": "Tone?",
+      "criteria": [
+       {
+        "what": "calm",
+        "examples": [
+         "fine, thanks"
+        ]
+       },
+       {
+        "what": "upset",
+        "examples": []
+       }
+      ]
+     },
+     "suffix": "Tone?\n\n0 {'what': 'calm', 'examples': ['fine, thanks']}\n1 {'what': 'upset', 'examples': []}\n\nReply with a single digit 0-1 only.<|im_end|>\n<|im_start|>assistant\n",
+     "codes": [],
+     "groups": [
+      [
+       48
+      ],
+      [
+       49
+      ]
+     ],
+     "tokens": 161,
+     "answer": {
+      "type": "score",
+      "score": 0.20203268397557617,
+      "confidence": 0.7979673160244238,
+      "probabilities": {
+       "0": 0.7979673160244238,
+       "1": 0.20203268397557617
+      },
+      "legend": {
+       "0": "{'what': 'calm', 'examples': ['fine, thanks']}",
+       "1": "{'what': 'upset', 'examples': []}"
+      }
+     }
+    },
+    {
+     "id": "reply",
+     "question": {
+      "type": "noul",
+      "instructions": "Reply now?",
+      "criteria": {
+       "true": "Yes, now",
+       "false": "Later"
+      }
+     },
+     "suffix": "Reply now?\nYes: Yes, now\nNo: Later\n\nReply with yes or no only.<|im_end|>\n<|im_start|>assistant\n",
+     "codes": [],
+     "groups": [
+      [
+       100,
+       101,
+       102
+      ],
+      [
+       103,
+       104,
+       105
+      ]
+     ],
+     "tokens": 95,
+     "answer": {
+      "type": "noul",
+      "noul": 0.3761263053148436
+     }
+    }
+   ]
+  }
+ ]
+}

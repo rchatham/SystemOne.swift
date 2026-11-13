@@ -58,6 +58,26 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(SystemOneRequest.self, from: data), request)
     }
 
+    func testNoStateIsNullOnTheWire() throws {
+        let request = SystemOneRequest(state: .media, questions: [
+            QuestionEntry(id: "urgent", question: .noul(Noul(instructions: "Urgent?"))),
+        ])
+        let data = try JSONEncoder().encode(request)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertTrue(object["state"] is NSNull)
+        XCTAssertNil(object["state_order"])
+        XCTAssertEqual(try JSONDecoder().decode(SystemOneRequest.self, from: data), request)
+
+        let wire = #"{"state": null, "question_order": ["q"], "questions": {"q": {"type": "noul", "instructions": "Urgent?"}}}"#
+        XCTAssertEqual(try JSONDecoder().decode(SystemOneRequest.self, from: Data(wire.utf8)).state, .media)
+        let missing = #"{"question_order": ["q"], "questions": {"q": {"type": "noul", "instructions": "Urgent?"}}}"#
+        XCTAssertThrowsError(try JSONDecoder().decode(SystemOneRequest.self, from: Data(missing.utf8)))
+
+        XCTAssertEqual(try JSONEncoder().encode(SystemOneState.media), Data("null".utf8))
+        XCTAssertEqual(try JSONDecoder().decode(SystemOneState.self, from: Data("null".utf8)), .media)
+        XCTAssertEqual(try JSONDecoder().decode(SystemOneState.self, from: Data(#""""#.utf8)), .text(""))
+    }
+
     func testResponseUsesPythonWireKeysAndRoundTrips() throws {
         let response = SystemOneResponse(
             model: "von-1.1.0",

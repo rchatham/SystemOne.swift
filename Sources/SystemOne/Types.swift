@@ -15,6 +15,12 @@ public struct StateField: Codable, Equatable, Sendable {
 public enum SystemOneState: Equatable, Sendable {
     case text(String)
     case fields([StateField])
+    /// No text: the request's media is the whole state, as d1's `state=None`
+    /// (a spoken state is a clip alone). d1 prompts write no state block, so
+    /// the questions follow the media directly; other backends read an empty
+    /// state. Its `Codable` form is `null` (the HTTP server keeps reading a
+    /// `null` state as the text `None`, as the Python von server does).
+    case media
 }
 
 /// One ordered Choice option.
@@ -125,10 +131,16 @@ public enum Question: Equatable, Sendable {
 public struct QuestionEntry: Equatable, Sendable {
     public let id: String
     public let question: Question
+    /// The question asked aloud: a backend that hears speech (d1-Omni-2B)
+    /// reads this clip where the question's instructions would be, and the
+    /// written instructions stay empty. Backends without speech refuse it,
+    /// and the wire format does not carry it.
+    public let spoken: AudioClip?
 
-    public init(id: String, question: Question) {
+    public init(id: String, question: Question, spoken: AudioClip? = nil) {
         self.id = id
         self.question = question
+        self.spoken = spoken
     }
 }
 
@@ -324,7 +336,9 @@ private func validateUniqueKeys(
 extension SystemOneState: Codable {
     public init(from decoder: Decoder) throws {
         let single = try decoder.singleValueContainer()
-        if let text = try? single.decode(String.self) {
+        if single.decodeNil() {
+            self = .media
+        } else if let text = try? single.decode(String.self) {
             self = .text(text)
         } else {
             self = .fields(try single.decode([StateField].self))
@@ -336,6 +350,7 @@ extension SystemOneState: Codable {
         switch self {
         case .text(let text): try container.encode(text)
         case .fields(let fields): try container.encode(fields)
+        case .media: try container.encodeNil()
         }
     }
 }
@@ -453,6 +468,12 @@ extension QuestionEntry: Codable {
     }
 
     public func encode(to encoder: Encoder) throws {
+        guard spoken == nil else {
+            throw EncodingError.invalidValue(self, EncodingError.Context(
+                codingPath: encoder.codingPath,
+                debugDescription: "Question \(id) is spoken; the wire format carries no audio."
+            ))
+        }
         var container = encoder.container(keyedBy: DynamicCodingKey.self)
         try container.encode(question, forKey: DynamicCodingKey(stringValue: id)!)
     }
@@ -462,7 +483,9 @@ extension SystemOneRequest {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: EnvelopeCodingKeys.self)
         model = try container.decodeIfPresent(String.self, forKey: .model) ?? "von-latest"
-        if let text = try? container.decode(String.self, forKey: .state) {
+        if container.contains(.state), try container.decodeNil(forKey: .state) {
+            state = .media
+        } else if let text = try? container.decode(String.self, forKey: .state) {
             state = .text(text)
         } else {
             let stateContainer = try container.nestedContainer(
@@ -510,9 +533,17 @@ extension SystemOneRequest {
             field: "SystemOneRequest.questions",
             path: encoder.codingPath
         )
+        if let entry = questions.first(where: { $0.spoken != nil }) {
+            throw EncodingError.invalidValue(entry, EncodingError.Context(
+                codingPath: encoder.codingPath,
+                debugDescription: "Question \(entry.id) is spoken; the wire format carries no audio."
+            ))
+        }
         var container = encoder.container(keyedBy: EnvelopeCodingKeys.self)
         try container.encode(model, forKey: .model)
         switch state {
+        case .media:
+            try container.encodeNil(forKey: .state)
         case .text(let text):
             try container.encode(text, forKey: .state)
         case .fields(let fields):

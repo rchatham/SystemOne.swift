@@ -67,6 +67,44 @@ jobs:
             -derivedDataPath .build/xcode-ios \
             CODE_SIGNING_ALLOWED=NO
 
+  mlx-runtime:
+    name: MLX runtime tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # SwiftPM command-line builds lack MLX's Metal library, so MLX checks run
+      # from the Xcode test bundle. They use tiny fixtures, never model weights.
+      - name: Build Xcode test bundle
+        run: |
+          xcodebuild build-for-testing \
+            -scheme SystemOne-Package \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath .build/xcode
+
+      - name: MLX tests (CPU)
+        env:
+          SYSTEMONE_MLX_TESTS: "1"
+        run: |
+          for bundle in SystemOneTests SystemOneD1Tests SystemOneEncodersTests SystemOneDecodersTests; do
+            xcrun xctest ".build/xcode/Build/Products/Debug/$bundle.xctest"
+          done
+
+      - name: MLX tests (GPU, informational)
+        continue-on-error: true
+        env:
+          SYSTEMONE_MLX_TESTS: "1"
+          SYSTEMONE_MLX_DEVICE: gpu
+        run: |
+          for bundle in SystemOneTests SystemOneD1Tests SystemOneEncodersTests SystemOneDecodersTests; do
+            xcrun xctest ".build/xcode/Build/Products/Debug/$bundle.xctest"
+          done
+
   model-parity:
     name: Production-weight GPU parity
     if: github.event_name == 'workflow_dispatch' && inputs.model-parity
@@ -150,12 +188,13 @@ jobs:
             -scheme SystemOne-Package \
             -destination 'platform=macOS,arch=arm64' \
             -configuration Release \
-            -derivedDataPath .build/xcode
+            -derivedDataPath .build/xcode \
+            ENABLE_TESTABILITY=YES
 
       - name: Weight parity (GPU)
         env:
           D1_MODEL_PARITY: "1"
           D1_DEVICE: gpu
         run: |
-          xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests \
+          xcrun xctest -XCTest SystemOneD1Tests.D1TextTests,SystemOneD1Tests.D1VisionTests,SystemOneD1Tests.D1AudioTests,SystemOneD1Tests.D1HeadTrainingTests \
             .build/xcode/Build/Products/Release/SystemOneD1Tests.xctest

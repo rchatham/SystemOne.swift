@@ -64,9 +64,12 @@ public enum D1Prompt {
     }
 
     /// A string passes through; ordered fields become a JSON object, matching
-    /// `json.dumps(state, ensure_ascii=False)` for string values.
+    /// `json.dumps(state, ensure_ascii=False)` for string values; no state is
+    /// empty text.
     public static func serialize(_ state: SystemOneState) -> String {
         switch state {
+        case .media:
+            return ""
         case .text(let text):
             return text
         case .fields(let fields):

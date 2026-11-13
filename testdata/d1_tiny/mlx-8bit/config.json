@@ -1,0 +1,73 @@
+{
+    "architectures": [
+        "D1OmniModel"
+    ],
+    "audio_config": {
+        "feat_in": 128,
+        "n_layers": 1,
+        "d_model": 64,
+        "subsampling_conv_channels": 16,
+        "ff_expansion_factor": 2,
+        "n_heads": 2,
+        "conv_kernel_size": 9,
+        "residual_width": 64
+    },
+    "audio_text_length": 256,
+    "bos_token_id": 1,
+    "dtype": "float16",
+    "head_layers": 2,
+    "image_text_length": 256,
+    "max_length": 512,
+    "model_type": "d1_omni",
+    "pad_token_id": 0,
+    "projector_hidden_size": 64,
+    "quantization": {
+        "group_size": 64,
+        "bits": 8,
+        "mode": "affine"
+    },
+    "quantization_config": {
+        "group_size": 64,
+        "bits": 8,
+        "mode": "affine"
+    },
+    "temperatures": {
+        "choice": 1.0,
+        "score": 1.0,
+        "noul": 1.0
+    },
+    "text_config": {
+        "vocab_size": 128,
+        "hidden_size": 64,
+        "intermediate_size": 192,
+        "num_hidden_layers": 4,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "layer_types": [
+            "conv",
+            "full_attention",
+            "conv",
+            "full_attention"
+        ],
+        "norm_eps": 1e-05,
+        "conv_L_cache": 3,
+        "block_ffn_dim_multiplier": 1.0,
+        "block_multiple_of": 64,
+        "max_position_embeddings": 1024,
+        "rope_theta": 1000000.0
+    },
+    "vision_config": {
+        "model_type": "siglip2_vision_model",
+        "hidden_size": 64,
+        "intermediate_size": 128,
+        "num_attention_heads": 2,
+        "num_channels": 3,
+        "num_hidden_layers": 1,
+        "num_patches": 16,
+        "patch_size": 16,
+        "layer_norm_eps": 1e-06,
+        "hidden_act": "gelu_pytorch_tanh",
+        "attention_dropout": 0.0,
+        "vision_use_head": false
+    }
+}
