@@ -68,6 +68,9 @@ public struct HTTPDecider: ActionDecider {
             stateJSON = try json(text)
         case .fields(let fields):
             stateJSON = "{\(try fields.map { "\(try json($0.key)):\(try json($0.value))" }.joined(separator: ","))}"
+        case .media:
+            // HTTP requests carry no media, and the server reads a null state as "None".
+            stateJSON = "null"
         }
         let criteria = try options.map { option in
             "\(try json(option.key)):\(try option.description.map(json) ?? "null")"

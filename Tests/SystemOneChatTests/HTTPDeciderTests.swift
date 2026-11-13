@@ -32,6 +32,12 @@ final class HTTPDeciderTests: XCTestCase {
         XCTAssertTrue(String(decoding: body, as: UTF8.self).hasPrefix(#"{"state":{"b":"2","a":"1"},"#))
     }
 
+    func testMediaStateIsNull() throws {
+        let body = try HTTPDecider.requestBody(state: .media, options: [ChoiceOption(key: "x")], instructions: "?")
+
+        XCTAssertTrue(String(decoding: body, as: UTF8.self).hasPrefix(#"{"state":null,"#))
+    }
+
     func testAnswerProbabilitiesFollowTheOfferedOrder() throws {
         let response = Data("""
             {"model":"d1-omni-600M","answers":{"route":{"type":"choice","choice":"b",
