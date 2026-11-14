@@ -132,6 +132,40 @@ final class JEVFullModelTests: XCTestCase {
         XCTAssertEqual(refund.noul, 0.991, accuracy: 0.02)
     }
 
+    /// The folded meanings must reach the model: reversing a score's levels, or
+    /// narrowing what a noul's `true` covers, moves the answer the way they say.
+    func testFoldedMeaningsSteerTheAnswers() async throws {
+        let folder = try Self.modelFolder()
+        try Self.requireMLX()
+        let engine = try Device.withDefaultDevice(Self.device) { try SystemOneEngine.jev(modelFolder: folder) }
+        let rising = ["no urgency", "can wait a week", "this week", "today", "within the hour", "drop everything now"]
+            .map(ScoreLevel.text)
+        let urgency = { (levels: [ScoreLevel]) in Question.score(Score(instructions: "How urgent is this incident?", criteria: levels)) }
+        let outage = try await engine.systemOne(
+            state: .text("Production database is down for all customers since 09:12."),
+            questions: [
+                QuestionEntry(id: "rising", question: urgency(rising)),
+                QuestionEntry(id: "falling", question: urgency(Array(rising.reversed()))),
+            ])
+        guard case .score(let up)? = outage["rising"], case .score(let down)? = outage["falling"] else { return XCTFail("score") }
+
+        let isReturn = { (meaning: NoulCriteria) in Question.noul(Noul(instructions: "Is the customer making a return?", criteria: meaning)) }
+        let swap = try await engine.systemOne(
+            state: .text("Customer asks to swap the blue shirt they bought for the same shirt in red."),
+            questions: [
+                QuestionEntry(id: "broad", question: isReturn(NoulCriteria(
+                    true: "they are sending an item back, for money or for a swap", false: "they keep everything they bought"))),
+                QuestionEntry(id: "narrow", question: isReturn(NoulCriteria(
+                    true: "they want their money back", false: "they want anything else, such as a swap or a repair"))),
+            ])
+        guard case .noul(let broad)? = swap["broad"], case .noul(let narrow)? = swap["narrow"] else { return XCTFail("noul") }
+
+        print("JEV-9B folded: urgency rising \(up.score) falling \(down.score); swap broad \(broad.noul) narrow \(narrow.noul)")
+        // Measured in bfloat16 on GPU: 4.76 against 0.58, and 0.90 against 0.05.
+        XCTAssertGreaterThan(up.score - down.score, 3)
+        XCTAssertGreaterThan(broad.noul - narrow.noul, 0.5)
+    }
+
     // MARK: Helpers
 
     static var device: Device {

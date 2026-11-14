@@ -157,7 +157,29 @@ final class JEVTests: XCTestCase {
             XCTAssertFalse(folded.contains("\n"), folded)
             XCTAssertTrue(folded.hasPrefix(question.instructions), folded)
         }
+        // A choice's descriptions are on its option lines already.
         XCTAssertEqual(JEVPrompt.foldedQuestion(questions[0]), "Which team?")
+        // The labels are the option lines' own, in their order.
+        XCTAssertEqual(JEVPrompt.foldedQuestion(questions[1]), "Is it urgent? (false: can wait; true: needs action today)")
+        XCTAssertEqual(
+            JEVPrompt.foldedQuestion(questions[2]),
+            "How severe? (0: none; 1: cosmetic; 2: minor; 3: major; 4: critical, e.g. outage; 5: catastrophic)")
+    }
+
+    func testFoldingSkipsWhatIsMissingAndFlattensLines() {
+        let noul = { (criteria: NoulCriteria?) in JEVPrompt.foldedQuestion(.noul(Noul(instructions: "Spam?", criteria: criteria))) }
+        XCTAssertEqual(noul(nil), "Spam?")
+        XCTAssertEqual(noul(NoulCriteria()), "Spam?")
+        XCTAssertEqual(noul(NoulCriteria(true: "sells something", false: " ")), "Spam? (true: sells something)")
+        XCTAssertEqual(noul(NoulCriteria(true: "an ad\n  or a\r\nlink")), "Spam? (true: an ad or a link)")
+
+        let score = { (levels: [ScoreLevel]) in JEVPrompt.foldedQuestion(.score(Score(instructions: "Risk?", criteria: levels))) }
+        XCTAssertEqual(score((0..<6).map { _ in .text("") }), "Risk?")
+        XCTAssertEqual(
+            score([.text("low"), .text(""), .described(what: "", examples: ["fraud", "abuse"]),
+                   .described(what: "high", examples: []), .text(""), .text("severe\nharm")]),
+            "Risk? (0: low; 2: e.g. fraud, abuse; 3: high; 5: severe harm)")
+        XCTAssertEqual(JEVPrompt.foldedQuestion(.noul(Noul(instructions: "", criteria: NoulCriteria(true: "yes")))), "(true: yes)")
     }
 
     func testPlansOneRowPerQuestionOnItsKindsSlots() throws {

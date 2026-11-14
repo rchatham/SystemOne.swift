@@ -217,8 +217,13 @@ weights.
   [decision]:
   ```
   - A noul always lists `false`, `true`, and a score `0` … `5`. What their
-    sides or levels mean travels in the `[question]` line
-    (`JEVPrompt.foldedQuestion`).
+    sides or levels mean follows the instructions on the `[question]` line
+    (`JEVPrompt.foldedQuestion`), labelled as the option lines are:
+    `Is it urgent? (false: can wait; true: needs action today)`, or
+    `How severe? (0: none; …; 4: critical, e.g. outage; 5: catastrophic)`.
+    Empty meanings are left out, and line breaks inside one become spaces.
+    This legend is System One's convention: JEV's own server takes the
+    question text as given.
   - A choice takes 1–16 options (`A)`–`P)`); a score must have exactly six levels.
   - A one-option choice is answered with probability 1 and runs no forward.
   - States render as d3's do.
@@ -285,6 +290,7 @@ It writes two fixtures:
 | Tokenizer ids (15 texts) and `bare-v1` prompts (8 cases) | exact |
 | bfloat16 decision probabilities vs the float32 reference | worst 0.0055 (bound 0.02); clear top answers kept |
 | `SystemOneEngine.jev` on the refund example | P(true) 0.991 ± 0.02 |
+| Folded meanings steer answers: score levels reversed, noul `true` narrowed | urgency 4.76 → 0.58; "return?" for a swap 0.90 → 0.05 |
 | Float32 states, head logits and probabilities | not run yet; needs about 34 GB free |
 
 ```bash

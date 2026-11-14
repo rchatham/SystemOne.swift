@@ -191,21 +191,46 @@ public enum JEVPrompt {
     /// what a noul's `true`/`false` or a score's six levels mean must travel in
     /// the question itself. A choice keeps its instructions as they are.
     ///
-    /// The result must stay on one line: `\n[options]` follows it.
+    /// The meanings follow the instructions in parentheses, labelled as the
+    /// option lines are and in their order: `Is it urgent? (false: can wait;
+    /// true: needs action today)`, `How severe? (0: none; …; 4: critical, e.g.
+    /// outage; 5: catastrophic)`. Empty meanings are left out, and line breaks
+    /// inside a meaning become spaces, since `\n[options]` follows the line.
+    /// The instructions themselves pass through as given, as the reference's.
     public static func foldedQuestion(_ question: Question) -> String {
+        let meanings: [(label: String, text: String?)]
         switch question {
         case .choice(let choice):
             return choice.instructions
         case .noul(let noul):
-            // TODO(human): fold `noul.criteria?.trueDescription` and
-            // `falseDescription` into the instructions.
-            return noul.instructions
+            meanings = [("false", noul.criteria?.falseDescription), ("true", noul.criteria?.trueDescription)]
         case .score(let score):
-            // TODO(human): fold the six levels (`score.criteria`, `.text` or
-            // `.described(what:examples:)`) into the instructions, so the model
-            // knows what 0 and 5 mean.
-            return score.instructions
+            meanings = score.criteria.enumerated().map { level in
+                switch level.element {
+                case .text(let text):
+                    return (String(level.offset), text)
+                case .described(let what, let examples):
+                    let flat = examples.map(oneLine).filter { !$0.isEmpty }
+                    let parts = [oneLine(what)] + (flat.isEmpty ? [] : ["e.g. " + flat.joined(separator: ", ")])
+                    return (String(level.offset), parts.filter { !$0.isEmpty }.joined(separator: ", "))
+                }
+            }
         }
+        let folded = meanings.compactMap { label, text -> String? in
+            let line = oneLine(text ?? "")
+            return line.isEmpty ? nil : "\(label): \(line)"
+        }
+        guard !folded.isEmpty else { return question.instructions }
+        let legend = "(" + folded.joined(separator: "; ") + ")"
+        return question.instructions.isEmpty ? legend : "\(question.instructions) \(legend)"
+    }
+
+    /// `text` with each line trimmed and the lines joined by single spaces.
+    static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }
 

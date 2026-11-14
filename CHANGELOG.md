@@ -12,6 +12,8 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   Apache-2.0 student of TypeSafe's closed Jev 1.13, on `Qwen35Trunk`.
   - One `bare-v1` prompt per question. A 24-slot float32 head reads the last
     token, with one `calibration.json` temperature per kind.
+  - A noul's `true`/`false` meanings and a score's six level meanings are
+    folded into the `[question]` line as a `(label: meaning; …)` legend.
   - Choices take 1–16 options and scores exactly six levels. Prompts over
     `maxLength` keep the head 60 % and tail 40 % of the state, as JEV's server
     does.
