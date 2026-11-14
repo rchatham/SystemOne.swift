@@ -24,8 +24,9 @@ public protocol ModelProfile: Sendable {
     /// The `model` assumed when a request omits one.
     var defaultModelAlias: String { get }
 
-    /// Literal text that marks options in packed prompts. `nil` when the
-    /// model escapes caller text, so injection is impossible.
+    /// Literal text that marks options in packed prompts. `nil` when there is
+    /// no marker to protect: the model escapes caller text, or reads its
+    /// answer at a fixed position rather than at option markers.
     var markerText: String? { get }
 
     /// Upper bound on one packed forward's UTF-8 bytes, from the model's context.

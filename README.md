@@ -9,6 +9,7 @@ tokens. Every answer is read off the model's distribution over the options.
 |---|---|---|---|
 | [LiquidAI/d1-omni-600M](https://huggingface.co/LiquidAI/d1-omni-600M) | `SystemOneD1` | text, images, speech | recommended |
 | [wfzyx/von](https://huggingface.co/wfzyx/von) | `SystemOneVon` | text | deprecated upstream; kept for compatibility |
+| [autotrust/JEV-9B](https://huggingface.co/autotrust/JEV-9B) | `SystemOneDecoders` | text | open student of TypeSafe's closed Jev 1.13; see [docs/DECODERS.md](docs/DECODERS.md#jev-jevbackend) |
 
 Both models share the Decision Index question schema, so one engine, one set of
 public types, and one HTTP server serve either. Each port is verified layer by
@@ -25,7 +26,7 @@ SystemOneD1      d1-omni: LFM2.5 trunk, decision head, SigLIP2 vision, FastConfo
 SystemOneVon     von: ModernBERT option-marker model and calibration
 SystemOneEncoders shared encoders: config-driven ModernBERT / mmBERT / Ettin
 SystemOneDecoders decoder trunks for decision readouts: Qwen3.5 (Gated DeltaNet + gated attention),
-                 LFM2, LFM3; LFM2-VL and LFM3-VL pictures; LFM3-Omni speech; d3 backends
+                 LFM2, LFM3; LFM2-VL and LFM3-VL pictures; LFM3-Omni speech; d3 and JEV backends
 SystemOneHTTP    SwiftNIO server for POST /v1/systemone, model-agnostic
 SystemOneChat    chatbot: System One routes every step, a TextGenerator writes the words
 system-one       CLI: `system-one serve`
@@ -98,7 +99,7 @@ so build the CLI with Xcode:
 ```bash
 xcodebuild build -scheme system-one -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/xcode
 .build/xcode/Build/Products/Debug/system-one serve --port 8016 --model-folder weights/d1-omni-600M
-# other backends: --backend d1-3b | d1-2b | d3 | decisiontune | marker | tree, with their own --model-folder
+# other backends: --backend d1-3b | d1-2b | d3 | jev | decisiontune | marker | tree, with their own --model-folder
 # von: --tokenizer <folder> --weights <option_marker.safetensors> instead of --model-folder
 ```
 
