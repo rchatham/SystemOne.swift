@@ -118,6 +118,7 @@ public enum DecoderError: Error, Equatable, Sendable {
     case prefixBatch(Int)
     case featureCount(row: Int, placeholders: Int, features: Int)
     case noEmbeddings
+    case noReadout
 }
 
 extension DecoderError: LocalizedError {
@@ -143,6 +144,8 @@ extension DecoderError: LocalizedError {
             return "Decoder row \(row) has \(placeholders) placeholder tokens for \(features) feature rows."
         case .noEmbeddings:
             return "This decoder stack has no token embeddings; it reads feature vectors."
+        case .noReadout:
+            return "This trunk was loaded without its language-model head, so it has no readout rows."
         }
     }
 }

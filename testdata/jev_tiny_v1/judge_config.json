@@ -1,0 +1,101 @@
+{
+  "hidden_size": 64,
+  "slots": {
+    "num_slots": 24,
+    "ranges": {
+      "noul": [
+        0,
+        2
+      ],
+      "score": [
+        2,
+        8
+      ],
+      "choice": [
+        8,
+        24
+      ]
+    },
+    "verbalizers": [
+      "false",
+      "true",
+      "0",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H",
+      "I",
+      "J",
+      "K",
+      "L",
+      "M",
+      "N",
+      "O",
+      "P"
+    ],
+    "template_version": "bare-v1"
+  },
+  "verbalizer_ids": [
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87
+  ],
+  "kinds": [
+    "noul",
+    "choice",
+    "score"
+  ],
+  "model_name": "jev-tiny",
+  "model_version": "0.0.0",
+  "lm_head_included": true,
+  "weights_mode": "unmerged",
+  "adapter_subfolder": "adapter",
+  "lora": {
+    "r": 4,
+    "alpha": 8,
+    "dropout": 0.0,
+    "target_modules": [
+      "in_proj_qkv",
+      "in_proj_z",
+      "out_proj",
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj"
+    ]
+  },
+  "softcap": null
+}

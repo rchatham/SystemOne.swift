@@ -10,6 +10,13 @@ public protocol DecoderTokenizer: Sendable {
     func encode(_ text: String) -> [Int]
 }
 
+/// A tokenizer that can also turn ids back into text, for backends that cut
+/// over-long states at token boundaries.
+public protocol ReversibleDecoderTokenizer: DecoderTokenizer {
+    /// The text of `ids`, special tokens included.
+    func decode(_ ids: [Int]) -> String
+}
+
 public enum DecoderTokenizerError: Error, Equatable, Sendable {
     case missingFile(String)
     case invalidJSON(String)
@@ -26,7 +33,7 @@ extension DecoderTokenizerError: LocalizedError {
 
 /// A local tokenizer folder (`tokenizer.json`, `tokenizer_config.json`),
 /// loaded with swift-transformers. Nothing is downloaded.
-public struct HubDecoderTokenizer: DecoderTokenizer {
+public struct HubDecoderTokenizer: ReversibleDecoderTokenizer {
     private let tokenizer: any Tokenizer
 
     public init(folder: URL) throws {
@@ -54,6 +61,10 @@ public struct HubDecoderTokenizer: DecoderTokenizer {
 
     public func encode(_ text: String) -> [Int] {
         tokenizer.encode(text: text, addSpecialTokens: false)
+    }
+
+    public func decode(_ ids: [Int]) -> String {
+        tokenizer.decode(tokens: ids, skipSpecialTokens: false)
     }
 }
 

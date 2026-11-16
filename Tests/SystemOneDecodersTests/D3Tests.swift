@@ -148,21 +148,21 @@ final class D3Tests: XCTestCase {
 
     func testAnswersFollowTheRuntime() {
         // Ties keep the first option; confidence is 1 − H / log n.
-        guard case .choice(let choice) = D3Answers.answer(D3Requests.question("team"), keys: ["billing", "tech_support", "a"], probabilities: [0.4, 0.4, 0.2]) else {
+        guard case .choice(let choice) = DecoderAnswers.answer(D3Requests.question("team"), keys: ["billing", "tech_support", "a"], probabilities: [0.4, 0.4, 0.2]) else {
             return XCTFail("choice")
         }
         XCTAssertEqual(choice.choice, "billing")
         let entropy = -(0.4 * Foundation.log(0.4) * 2 + 0.2 * Foundation.log(0.2))
         XCTAssertEqual(choice.confidence, 1 - entropy / Foundation.log(3.0), accuracy: 1e-12)
 
-        guard case .score(let score) = D3Answers.answer(D3Requests.question("tone"), keys: ["0", "1"], probabilities: [0.25, 0.75]) else {
+        guard case .score(let score) = DecoderAnswers.answer(D3Requests.question("tone"), keys: ["0", "1"], probabilities: [0.25, 0.75]) else {
             return XCTFail("score")
         }
         XCTAssertEqual(score.score, 0.75, accuracy: 1e-12)
         XCTAssertEqual(score.legend.map(\.description), [#"{"examples":["fine, thanks"],"what":"calm"}"#, #"{"examples":[],"what":"upset"}"#])
-        XCTAssertEqual(D3Answers.confidence([1]), 1)
-        XCTAssertEqual(D3Answers.confidence([1, 0]), 1)
-        assertClose(D3Answers.probabilities([0, Float(Foundation.log(3.0))], temperature: 1), [0.25, 0.75], accuracy: 1e-6)
+        XCTAssertEqual(DecoderAnswers.confidence([1]), 1)
+        XCTAssertEqual(DecoderAnswers.confidence([1, 0]), 1)
+        assertClose(DecoderAnswers.probabilities([0, Float(Foundation.log(3.0))], temperature: 1), [0.25, 0.75], accuracy: 1e-6)
     }
 }
 
