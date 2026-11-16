@@ -51,6 +51,13 @@ struct JEVFullFixture: Decodable {
 /// Xcode-built bundle with `SYSTEMONE_MLX_TESTS=1` (bfloat16 holds about
 /// 16 GB of weights, float32 about 36 GB).
 final class JEVFullModelTests: XCTestCase {
+    /// Needs only `JEV_MODEL_FOLDER`: the configs and tokenizer are hashed, and no weights are opened.
+    func testPinnedConfigsAndTokenizerMatchTheSnapshot() throws {
+        let folder = try Self.modelFolder()
+        XCTAssertNoThrow(try JEVArtifacts.jev9B.verifyFiles(in: folder))
+        XCTAssertNoThrow(try JEVConfiguration(modelFolder: folder))
+    }
+
     func testTokenizerAndPromptsMatchPython() throws {
         let folder = try Self.modelFolder()
         let fixture = try JEVFullFixture.load()
@@ -60,9 +67,36 @@ final class JEVFullModelTests: XCTestCase {
         }
         for testCase in fixture.cases {
             let kind = try XCTUnwrap(JEVKind(rawValue: testCase.kind))
-            let prompt = JEVPrompt.render(kind: kind, state: testCase.state, question: testCase.question, options: testCase.options)
+            let prompt = try JEVPrompt.render(kind: kind, state: testCase.state, question: testCase.question, options: testCase.options)
             XCTAssertEqual(prompt, testCase.prompt, testCase.id)
             XCTAssertEqual(tokenizer.encode(prompt), testCase.ids, testCase.id)
+        }
+    }
+
+    /// The real tokenizer spreads a rare character over several tokens, so a
+    /// token cut can fall inside one. Needs only `JEV_MODEL_FOLDER`.
+    func testLongStatesOfSplitCharactersAreCutBetweenCharacters() throws {
+        let folder = try Self.modelFolder()
+        let tokenizer = try HubDecoderTokenizer(folder: folder)
+        let replacement: Unicode.Scalar = "\u{FFFD}"
+        let state = String(repeating: "𓀀𐍈🜁", count: 400)
+        let stateIDs = tokenizer.encode(state)
+        XCTAssertTrue(
+            (1...12).contains { tokenizer.decode(Array(stateIDs[..<$0])).unicodeScalars.last == replacement },
+            "these characters must take more than one token each")
+
+        let entry = QuestionEntry(id: "q", question: .noul(Noul(instructions: "Is this readable?")))
+        let configuration = try JEVConfiguration(modelFolder: folder)
+        // Enough lengths that some head or tail cut lands inside a character.
+        for maxLength in 96..<128 {
+            let backend = try JEVBackend(
+                modelID: "jev", configuration: configuration, tokenizer: tokenizer, maxLength: maxLength,
+                trunk: nil, head: nil)
+            let ids = try backend.plan(SystemOneRequest(state: .text(state), questions: [entry]), media: nil).rows[0].ids
+            XCTAssertLessThanOrEqual(ids.count, maxLength)
+            let prompt = tokenizer.decode(ids)
+            XCTAssertFalse(prompt.unicodeScalars.contains(replacement), "maxLength \(maxLength): \(prompt)")
+            XCTAssertTrue(prompt.hasPrefix("[kind] noul\n[state] 𓀀"), "maxLength \(maxLength): \(prompt)")
         }
     }
 

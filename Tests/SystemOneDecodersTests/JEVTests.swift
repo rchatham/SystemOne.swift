@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MLX
 import MLXNN
@@ -64,6 +65,13 @@ private struct ScalarTokenizer: ReversibleDecoderTokenizer {
     }
 }
 
+/// One token per UTF-8 byte, as a byte-level BPE falls back to for rare
+/// characters: a slice that ends inside a character decodes to U+FFFD.
+private struct ByteTokenizer: ReversibleDecoderTokenizer {
+    func encode(_ text: String) -> [Int] { text.utf8.map(Int.init) }
+    func decode(_ ids: [Int]) -> String { String(decoding: ids.map(UInt8.init), as: UTF8.self) }
+}
+
 final class JEVTests: XCTestCase {
     func testConfigurationReadsTheTinyFolder() throws {
         let configuration = try JEVConfiguration(modelFolder: JEVTinyFixture.folder)
@@ -93,9 +101,115 @@ final class JEVTests: XCTestCase {
         }
     }
 
-    func testRendersTheModelCardTemplate() {
+    func testConfigurationRejectsFieldsThatChangeWhatTheSlotsMean() {
+        let calibration: [String: Any] = ["per_kind": ["noul": 1.0, "choice": 1.0, "score": 1.0]]
+        let letters = "ABCDEFGHIJKLMNOP".map(String.init)
+        let sides = ["false", "true"], levels = ["0", "1", "2", "3", "4", "5"]
+        let standard = ["noul": [0, 2], "score": [2, 8], "choice": [8, 24]]
+        func judge(
+            ranges: [String: [Int]] = standard, slots: Int = 24, verbalizers: Any? = nil, extra: [String: Any] = [:]
+        ) -> [String: Any] {
+            var object: [String: Any] = ["num_slots": slots, "template_version": "bare-v1", "ranges": ranges]
+            object["verbalizers"] = verbalizers
+            return ["slots": object].merging(extra) { $1 }
+        }
+
+        // JEV-9B's own values, and a config that says nothing.
+        XCTAssertNoThrow(try JEVConfiguration(
+            judge: judge(verbalizers: sides + levels + letters, extra: ["softcap": NSNull(), "weights_mode": "unmerged"]),
+            calibration: calibration))
+        XCTAssertNoThrow(try JEVConfiguration(judge: judge(), calibration: calibration))
+        // The verbalizers follow the ranges, wherever those put a kind and however many choices they hold.
+        let moved = ["choice": [0, 8], "score": [8, 14], "noul": [14, 16]]
+        XCTAssertNoThrow(try JEVConfiguration(
+            judge: judge(ranges: moved, slots: 16, verbalizers: Array(letters.prefix(8)) + levels + sides),
+            calibration: calibration))
+
+        for (label, judge) in [
+            ("softcap", judge(extra: ["softcap": 30.0])),
+            ("softcap object", judge(extra: ["softcap": ["kind": "tanh", "cap": 30] as [String: Any]])),
+            ("merged weights", judge(extra: ["weights_mode": "merged"])),
+            ("weights_mode not a string", judge(extra: ["weights_mode": 1])),
+            ("noul sides swapped", judge(verbalizers: ["true", "false"] + levels + letters)),
+            ("score levels reversed", judge(verbalizers: sides + Array(levels.reversed()) + letters)),
+            ("choice letters shuffled", judge(verbalizers: sides + levels + ["B", "A"] + Array(letters.dropFirst(2)))),
+            ("lowercase letters", judge(verbalizers: sides + levels + letters.map { $0.lowercased() })),
+            ("a slot short", judge(verbalizers: Array((sides + levels + letters).dropLast()))),
+            ("not strings", judge(verbalizers: Array(0..<24))),
+            ("standard order under moved ranges",
+             judge(ranges: moved, slots: 16, verbalizers: sides + levels + Array(letters.prefix(8)))),
+        ] {
+            XCTAssertThrowsError(try JEVConfiguration(judge: judge, calibration: calibration), label) {
+                guard case .invalidConfiguration? = $0 as? JEVError else { return XCTFail("\(label): \($0)") }
+            }
+        }
+    }
+
+    func testArtifactsPinTheFilesBesideTheWeights() throws {
+        let folder = JEVTinyFixture.folder
+        func pin(_ name: String) throws -> PinnedArtifact {
+            let data = try Data(contentsOf: folder.appendingPathComponent(name))
+            return PinnedArtifact(
+                byteCount: data.count, sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+        }
+        // No weights file has these, so a backend that reached one would fail on it.
+        let noWeights = PinnedArtifact(byteCount: 0, sha256: "")
+        func artifacts(_ files: [String: PinnedArtifact]) -> JEVArtifacts {
+            JEVArtifacts(shards: [:], adapter: noWeights, head: noWeights, files: files)
+        }
+        let names = ["config.json", "model.safetensors.index.json", "adapter/adapter_config.json",
+                     "judge_config.json", "calibration.json"]
+        let pins = try Dictionary(uniqueKeysWithValues: names.map { ($0, try pin($0)) })
+        XCTAssertNoThrow(try artifacts(pins).verifyFiles(in: folder))
+        XCTAssertNoThrow(try artifacts([:]).verifyFiles(in: folder))
+        XCTAssertEqual(JEVArtifacts(shards: [:], adapter: noWeights, head: noWeights).files, [:])
+
+        let calibration = pins["calibration.json"]!, judge = pins["judge_config.json"]!
+        var resized = pins
+        resized["calibration.json"] = PinnedArtifact(byteCount: calibration.byteCount + 1, sha256: calibration.sha256)
+        let wrongSize = JEVError.pinnedFile(
+            name: "calibration.json",
+            reason: "it has \(calibration.byteCount) bytes; expected exactly \(calibration.byteCount + 1)")
+        XCTAssertThrowsError(try artifacts(resized).verifyFiles(in: folder)) { XCTAssertEqual($0 as? JEVError, wrongSize) }
+
+        // The same length with other bytes, as a retuned temperature would be.
+        let zeros = String(repeating: "0", count: 64)
+        var edited = pins
+        edited["judge_config.json"] = PinnedArtifact(byteCount: judge.byteCount, sha256: zeros)
+        XCTAssertThrowsError(try artifacts(edited).verifyFiles(in: folder)) {
+            XCTAssertEqual($0 as? JEVError, .pinnedFile(
+                name: "judge_config.json", reason: "its SHA-256 is \(judge.sha256); expected \(zeros)"))
+        }
+        // The tiny folder has no tokenizer.
+        XCTAssertThrowsError(try artifacts(["tokenizer.json": judge]).verifyFiles(in: folder)) {
+            XCTAssertEqual($0 as? JEVError, .pinnedFile(name: "tokenizer.json", reason: "it is missing or unreadable"))
+        }
+
+        // The backend checks these before it reads a config or opens a weights file.
+        XCTAssertThrowsError(try JEVBackend(modelFolder: folder, artifacts: artifacts(resized))) {
+            XCTAssertEqual($0 as? JEVError, wrongSize)
+        }
+    }
+
+    func testJEV9BPinsEveryFileTheBackendReads() {
+        let pinned = JEVArtifacts.jev9B
+        XCTAssertEqual(Set(pinned.files.keys), [
+            "config.json", "model.safetensors.index.json", "adapter/adapter_config.json",
+            "judge_config.json", "calibration.json", "tokenizer.json", "tokenizer_config.json",
+        ])
+        XCTAssertEqual(pinned.shards.count, 5)
+        // tools/jev_golden_capture.py pins the same tokenizer.
         XCTAssertEqual(
-            JEVPrompt.render(
+            pinned.files["tokenizer.json"]?.sha256, "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523")
+        for (name, pin) in pinned.files {
+            XCTAssertGreaterThan(pin.byteCount, 0, name)
+            XCTAssertEqual(pin.sha256.count, 64, name)
+        }
+    }
+
+    func testRendersTheModelCardTemplate() throws {
+        XCTAssertEqual(
+            try JEVPrompt.render(
                 kind: .choice,
                 state: "SKU AX-330 stock at 8% of safety level; supplier late twice this quarter.",
                 question: "Supplier response for this scenario.",
@@ -114,11 +228,20 @@ final class JEVTests: XCTestCase {
             """
         )
         XCTAssertEqual(
-            JEVPrompt.render(kind: .noul, state: "S", question: "Q?", options: ["false", "true"]),
+            try JEVPrompt.render(kind: .noul, state: "S", question: "Q?", options: ["false", "true"]),
             "[kind] noul\n[state] S\n[question] Q?\n[options]\nfalse\ntrue\n[decision]:"
         )
-        let sixteen = JEVPrompt.render(kind: .choice, state: "", question: "q", options: (0..<16).map { "o\($0)" })
+        let sixteen = try JEVPrompt.render(kind: .choice, state: "", question: "q", options: (0..<16).map { "o\($0)" })
         XCTAssertTrue(sixteen.hasSuffix("O) o14\nP) o15\n[decision]:"))
+
+        // There is no seventeenth label: a longer choice is an error, not a trap.
+        XCTAssertThrowsError(
+            try JEVPrompt.render(kind: .choice, state: "", question: "q", options: (0..<17).map { "o\($0)" })
+        ) {
+            XCTAssertEqual($0 as? JEVError, .tooManyOptions(count: 17, maximum: 16))
+        }
+        // Only a choice labels its options.
+        XCTAssertNoThrow(try JEVPrompt.render(kind: .score, state: "", question: "q", options: (0..<17).map(String.init)))
     }
 
     func testOptionsAndValidation() {
@@ -227,19 +350,38 @@ final class JEVTests: XCTestCase {
         func plan(_ question: Question) throws {
             _ = try backend.plan(SystemOneRequest(state: .text("s"), questions: [QuestionEntry(id: "q", question: question)]), media: nil)
         }
-        XCTAssertThrowsError(try plan(.choice(Choice(instructions: "q", criteria: (0..<17).map { ChoiceOption(key: "o\($0)") }))))
-        XCTAssertThrowsError(try plan(.score(Score(instructions: "q", criteria: (0..<7).map { .text("\($0)") }))))
+        // Each is the request's fault, with a reason an HTTP server can return.
+        XCTAssertThrowsError(try plan(.choice(Choice(instructions: "q", criteria: (0..<17).map { ChoiceOption(key: "o\($0)") })))) {
+            XCTAssertEqual(
+                ($0 as? any RequestRejection)?.rejectionReason, "Question 'q' is invalid: a JEV choice takes 1 to 16 options")
+        }
+        XCTAssertThrowsError(try plan(.score(Score(instructions: "q", criteria: (0..<7).map { .text("\($0)") })))) {
+            XCTAssertEqual(
+                ($0 as? any RequestRejection)?.rejectionReason,
+                "Question 'q' is invalid: a JEV score has exactly 6 levels, 0 to 5")
+        }
         XCTAssertThrowsError(
             try backend.plan(SystemOneRequest(state: .text("s"), questions: []),
                              media: .images([RGBImage(width: 1, height: 1, pixels: [0, 0, 0])]))
         ) {
             XCTAssertEqual($0 as? SystemOneEngineError, .unsupportedMedia(model: "jev-test"))
+            XCTAssertEqual(($0 as? any RequestRejection)?.rejectionReason, "Model jev-test does not accept this media.")
         }
+        XCTAssertEqual(
+            JEVError.promptTooLong(id: "q", tokens: 5_000, maximum: 4_096).rejectionReason,
+            "Question q needs 5000 tokens without its state; the limit is 4096.")
+        XCTAssertEqual(
+            JEVError.tooManyOptions(count: 17, maximum: 16).rejectionReason,
+            "A JEV choice lists at most 16 options; this one has 17.")
+        // A broken model folder is the server's fault.
+        XCTAssertNil(JEVError.invalidConfiguration("softcap").rejectionReason)
+        XCTAssertNil(JEVError.invalidHead("shape").rejectionReason)
+        XCTAssertNil(JEVError.pinnedFile(name: "calibration.json", reason: "it is missing or unreadable").rejectionReason)
     }
 
     func testLongStatesKeepTheirHeadAndTail() throws {
         let backend = try makeBackend(maxLength: 120)
-        let empty = JEVPrompt.render(kind: .noul, state: "", question: "Q?", options: ["false", "true"]).unicodeScalars.count
+        let empty = try JEVPrompt.render(kind: .noul, state: "", question: "Q?", options: ["false", "true"]).unicodeScalars.count
         let state = String(repeating: "h", count: 100) + String(repeating: "m", count: 100) + String(repeating: "t", count: 100)
         let entry = QuestionEntry(id: "q", question: .noul(Noul(instructions: "Q?")))
 
@@ -248,12 +390,40 @@ final class JEVTests: XCTestCase {
         let budget = 120 - empty
         let kept = String(repeating: "h", count: budget * 3 / 5) + String(repeating: "t", count: budget - budget * 3 / 5)
         XCTAssertEqual(ScalarTokenizer().decode(plan.rows[0].ids),
-                       JEVPrompt.render(kind: .noul, state: kept, question: "Q?", options: ["false", "true"]))
+                       try JEVPrompt.render(kind: .noul, state: kept, question: "Q?", options: ["false", "true"]))
 
         let tight = try makeBackend(maxLength: empty - 1)
         XCTAssertThrowsError(try tight.plan(SystemOneRequest(state: .text("s"), questions: [entry]), media: nil)) {
             XCTAssertEqual($0 as? JEVError, .promptTooLong(id: "q", tokens: empty, maximum: empty - 1))
         }
+    }
+
+    func testLongStatesAreCutBetweenCharacters() throws {
+        let tokenizer = ByteTokenizer()
+        let empty = try JEVPrompt.render(kind: .noul, state: "", question: "Q?", options: ["false", "true"]).utf8.count
+        // Three bytes a character at each end. A budget of 54 tokens keeps 32 at the
+        // head and 22 at the tail: both cuts fall inside a character.
+        let state = String(repeating: "日", count: 40) + String(repeating: "m", count: 60) + String(repeating: "本", count: 40)
+        let stateIDs = tokenizer.encode(state)
+        XCTAssertTrue(tokenizer.decode(Array(stateIDs[..<32])).hasSuffix("\u{FFFD}"))
+        XCTAssertTrue(tokenizer.decode(Array(stateIDs[(stateIDs.count - 22)...])).hasPrefix("\u{FFFD}"))
+
+        let backend = try makeBackend(maxLength: empty + 54, tokenizer: tokenizer)
+        let entry = QuestionEntry(id: "q", question: .noul(Noul(instructions: "Q?")))
+        let plan = try backend.plan(SystemOneRequest(state: .text(state), questions: [entry]), media: nil)
+        let prompt = tokenizer.decode(plan.rows[0].ids)
+        XCTAssertFalse(prompt.unicodeScalars.contains("\u{FFFD}"), prompt)
+        // Ten whole characters of the head's 32 bytes, and seven of the tail's 22.
+        let kept = String(repeating: "日", count: 10) + String(repeating: "本", count: 7)
+        XCTAssertEqual(prompt, try JEVPrompt.render(kind: .noul, state: kept, question: "Q?", options: ["false", "true"]))
+        XCTAssertLessThanOrEqual(plan.rows[0].ids.count, empty + 54)
+
+        // A replacement character the state itself holds is not at a cut, so it stays.
+        let marked = "\u{FFFD}" + String(repeating: "a", count: 200) + "\u{FFFD}"
+        let markedPlan = try backend.plan(SystemOneRequest(state: .text(marked), questions: [entry]), media: nil)
+        let markedPrompt = tokenizer.decode(markedPlan.rows[0].ids)
+        XCTAssertTrue(markedPrompt.contains("[state] \u{FFFD}a"), markedPrompt)
+        XCTAssertTrue(markedPrompt.contains("a\u{FFFD}\n[question]"), markedPrompt)
     }
 
     func testAdapterConfigRejectsWhatItCannotMerge() throws {
@@ -272,10 +442,12 @@ final class JEVTests: XCTestCase {
         }
     }
 
-    private func makeBackend(maxLength: Int = 4_096) throws -> JEVBackend {
+    private func makeBackend(
+        maxLength: Int = 4_096, tokenizer: any ReversibleDecoderTokenizer = ScalarTokenizer()
+    ) throws -> JEVBackend {
         try JEVBackend(
             modelID: "jev-test", configuration: JEVConfiguration(modelFolder: JEVTinyFixture.folder),
-            tokenizer: ScalarTokenizer(), maxLength: maxLength, trunk: nil, head: nil
+            tokenizer: tokenizer, maxLength: maxLength, trunk: nil, head: nil
         )
     }
 }

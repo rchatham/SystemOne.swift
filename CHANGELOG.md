@@ -16,8 +16,18 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
     folded into the `[question]` line as a `(label: meaning; …)` legend.
   - Choices take 1–16 options and scores exactly six levels. Prompts over
     `maxLength` keep the head 60 % and tail 40 % of the state, as JEV's server
-    does.
-  - `JEVArtifacts.jev9B` pins the five shards, the adapter and the head.
+    does. Each cut falls between characters: a token slice that ends inside
+    a multi-byte character no longer leaves U+FFFD in the prompt.
+  - `JEVPrompt.render` throws `JEVError.tooManyOptions` for more than 16
+    choice options.
+  - `JEVArtifacts.jev9B` pins the five shards, the adapter and the head, and
+    in `JEVArtifacts.files` every other file the backend reads: `config.json`,
+    the shard index, `adapter_config.json`, `judge_config.json`,
+    `calibration.json`, `tokenizer.json` and `tokenizer_config.json`. They
+    are checked before anything is parsed (`JEVError.pinnedFile`).
+  - `JEVConfiguration` rejects a `judge_config.json` with a non-null
+    `softcap`, a `weights_mode` other than `unmerged`, or `slots.verbalizers`
+    that do not match the prompt's labels in slot order.
   - On a tiny transformers + peft reference it matches within 1.1e-5
     relative at float32 (`tools/jev_golden_capture.py`).
   - On the real JEV-9B weights in bfloat16, decision probabilities stay
@@ -30,6 +40,18 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   `loadsReadout: false` skips an untied language-model head that a model
   never reads.
 - `ReversibleDecoderTokenizer` (`HubDecoderTokenizer.decode`).
+- `RequestRejection`: an error that blames the request and carries a
+  `rejectionReason` safe to show the caller. `SystemOneEngineError` (invalid
+  questions, unsupported media, empty or duplicate criteria, keys and ids),
+  `JEVError.promptTooLong` and `D1PromptError` conform.
+
+### Changed
+
+- HTTP: `POST /v1/systemone` answers a handler error that is a
+  `RequestRejection` with 422 and its reason as `detail` (at most 1,024
+  characters), where it used to answer 500. A question the served model
+  cannot read, such as a JEV score without six levels, now tells the client
+  why. Every other handler error is still a bare 500.
 
 ## [0.2.0] - 2026-11-12
 
