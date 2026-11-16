@@ -222,6 +222,8 @@ weights.
     `Is it urgent? (false: can wait; true: needs action today)`, or
     `How severe? (0: none; …; 4: critical, e.g. outage; 5: catastrophic)`.
     Empty meanings are left out, and line breaks inside one become spaces.
+    Line breaks in a choice option's key or description become spaces too,
+    so each option stays on its own line.
     This legend is System One's convention: JEV's own server takes the
     question text as given.
   - A choice takes 1–16 options (`A)`–`P)`); a score must have exactly six levels.

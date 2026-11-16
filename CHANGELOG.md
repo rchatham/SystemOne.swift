@@ -6,8 +6,6 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-12
-
 ### Added
 
 - JEV: `JEVBackend` (`--backend jev`) serves autotrust/JEV-9B, an open
@@ -32,6 +30,11 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   `loadsReadout: false` skips an untied language-model head that a model
   never reads.
 - `ReversibleDecoderTokenizer` (`HubDecoderTokenizer.decode`).
+
+## [0.2.0] - 2026-11-12
+
+### Added
+
 - Video: `SystemOneMedia.video(VideoClip)` (decoded frames and their fps),
   read by d1-2B and d1-Omni-2B through LFM3-VL's video processor.
   - Frames are sampled at 2 a second and resized to one size inside the

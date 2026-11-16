@@ -131,6 +131,13 @@ final class JEVTests: XCTestCase {
         XCTAssertEqual(options.kind, .choice)
         XCTAssertEqual(options.keys, ["billing", "fraud", "other"])
         XCTAssertEqual(options.texts, ["billing: Charges and refunds", "fraud", "other"])
+        // An option stays on its own line, whatever line breaks its text has.
+        let broken = Question.choice(Choice(instructions: "q", criteria: [
+            ChoiceOption(key: "billing", description: "Charges\n  and refunds"),
+            ChoiceOption(key: "two\nlines", description: " \n "),
+        ]))
+        XCTAssertEqual(JEVPrompt.options(for: broken).keys, ["billing", "two\nlines"])
+        XCTAssertEqual(JEVPrompt.options(for: broken).texts, ["billing: Charges and refunds", "two lines"])
         XCTAssertEqual(JEVPrompt.options(for: .noul(Noul(instructions: "q"))).texts, ["false", "true"])
         let six = Question.score(Score(instructions: "q", criteria: (0..<6).map { .text("l\($0)") }))
         XCTAssertEqual(JEVPrompt.options(for: six).keys, ["0", "1", "2", "3", "4", "5"])

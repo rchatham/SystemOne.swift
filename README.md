@@ -11,8 +11,8 @@ tokens. Every answer is read off the model's distribution over the options.
 | [wfzyx/von](https://huggingface.co/wfzyx/von) | `SystemOneVon` | text | deprecated upstream; kept for compatibility |
 | [autotrust/JEV-9B](https://huggingface.co/autotrust/JEV-9B) | `SystemOneDecoders` | text | open student of TypeSafe's closed Jev 1.13; see [docs/DECODERS.md](docs/DECODERS.md#jev-jevbackend) |
 
-Both models share the Decision Index question schema, so one engine, one set of
-public types, and one HTTP server serve either. Each port is verified layer by
+These models share the Decision Index question schema, so one engine, one set of
+public types, and one HTTP server serve any of them. Each port is verified layer by
 layer against the model's own Python reference with golden test vectors.
 
 ## Layout

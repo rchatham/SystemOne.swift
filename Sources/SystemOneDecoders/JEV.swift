@@ -160,9 +160,10 @@ public enum JEVPrompt {
             let levels = (0..<scoreLevels).map(String.init)
             return (.score, levels, levels)
         case .choice(let choice):
+            // Each option is one line, so line breaks in its text become spaces.
             let texts = choice.criteria.map { option -> String in
-                let description = option.description.flatMap { $0.isEmpty ? nil : $0 }
-                return description.map { "\(option.key): \($0)" } ?? option.key
+                let description = oneLine(option.description ?? "")
+                return description.isEmpty ? oneLine(option.key) : "\(oneLine(option.key)): \(description)"
             }
             return (.choice, choice.criteria.map(\.key), texts)
         }
