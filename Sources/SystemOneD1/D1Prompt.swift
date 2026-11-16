@@ -36,6 +36,11 @@ extension D1PromptError: LocalizedError {
     }
 }
 
+/// Both cases are the request's fault, so an HTTP server may return them.
+extension D1PromptError: RequestRejection {
+    public var rejectionReason: String? { errorDescription }
+}
+
 /// `prompt.py`: questions in, token sequences out.
 ///
 ///     <bos> <state> state <q> instructions <opt> <mask> option_0 </opt> ... <decide>

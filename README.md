@@ -121,6 +121,9 @@ The request schema follows TypeSafe's:
   OpenAI's `data` shape.
 - A compressed request body (`Content-Encoding: zstd` or any other coding)
   gets 415, so the client resends it plainly.
+- A question the served model refuses gets 422 with the reason in `detail`,
+  for example a JEV score without six levels. Other failures stay a bare
+  500. See [docs/DECODERS.md](docs/DECODERS.md#request-rejections).
 
 ## Chatbot
 

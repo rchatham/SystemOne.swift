@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MLX
 import SystemOne
@@ -13,6 +14,10 @@ public enum JEVError: Error, Equatable, Sendable {
     case invalidHead(String)
     /// Even with an empty state the prompt exceeds `maxLength` tokens.
     case promptTooLong(id: String, tokens: Int, maximum: Int)
+    /// A choice prompt lists more options than there are `A` … `P` labels.
+    case tooManyOptions(count: Int, maximum: Int)
+    /// A file pinned by ``JEVArtifacts/files`` is missing or is not the pinned file.
+    case pinnedFile(name: String, reason: String)
 }
 
 extension JEVError: LocalizedError {
@@ -22,6 +27,20 @@ extension JEVError: LocalizedError {
         case .invalidHead(let reason): return "The JEV head is invalid: \(reason)."
         case .promptTooLong(let id, let tokens, let maximum):
             return "Question \(id) needs \(tokens) tokens without its state; the limit is \(maximum)."
+        case .tooManyOptions(let count, let maximum):
+            return "A JEV choice lists at most \(maximum) options; this one has \(count)."
+        case .pinnedFile(let name, let reason):
+            return "\(name) is not the pinned file: \(reason)."
+        }
+    }
+}
+
+extension JEVError: RequestRejection {
+    public var rejectionReason: String? {
+        switch self {
+        case .promptTooLong, .tooManyOptions: return errorDescription
+        // A model folder that cannot be served is not the request's fault.
+        case .invalidConfiguration, .invalidHead, .pinnedFile: return nil
         }
     }
 }
@@ -75,6 +94,30 @@ public struct JEVConfiguration: Equatable, Sendable {
             slots[kind] = range[0]..<range[1]
             perKind[kind] = temperature
         }
+        // The head's logits are read as they are, and the adapter is merged at
+        // load. A soft cap, or shards that already hold the adapter, would
+        // change every answer without an error.
+        if let softcap = judge["softcap"], !(softcap is NSNull) {
+            throw JEVError.invalidConfiguration("a softcap on the logits is not supported")
+        }
+        if let mode = judge["weights_mode"], !(mode is NSNull), (mode as? String) != "unmerged" {
+            throw JEVError.invalidConfiguration("weights_mode must be unmerged; the adapter is merged at load")
+        }
+        // Slot i answers with verbalizer i. The prompt labels its options
+        // false/true, 0 … 5 and A … P in slot order, so the list must say the same.
+        if let listed = slotsObject["verbalizers"], !(listed is NSNull) {
+            guard let verbalizers = listed as? [String], verbalizers.count == count else {
+                throw JEVError.invalidConfiguration("slots.verbalizers must name each of the \(count) slots")
+            }
+            for kind in JEVKind.allCases {
+                let labels = JEVPrompt.labels(for: kind), start = slots[kind]!.lowerBound
+                let read = min(labels.count, slots[kind]!.count)
+                guard Array(verbalizers[start ..< start + read]) == Array(labels.prefix(read)) else {
+                    throw JEVError.invalidConfiguration(
+                        "slots.verbalizers must give the \(kind.rawValue) slots as \(labels.prefix(read).joined(separator: ", "))")
+                }
+            }
+        }
         let subfolder = judge["adapter_subfolder"] as? String ?? "adapter"
         guard !subfolder.isEmpty, !subfolder.hasPrefix("/"), !subfolder.split(separator: "/").contains("..") else {
             throw JEVError.invalidConfiguration("adapter_subfolder must name a folder inside the model folder")
@@ -94,11 +137,40 @@ public struct JEVArtifacts: Equatable, Sendable {
     public let adapter: PinnedArtifact
     /// `head.safetensors`.
     public let head: PinnedArtifact
+    /// The other files the backend reads, by path inside the model folder:
+    /// the configs, the shard index and the tokenizer. A different
+    /// temperature, slot range, LoRA scale or token id changes every answer
+    /// as surely as a different weight does.
+    public let files: [String: PinnedArtifact]
 
-    public init(shards: [String: PinnedArtifact], adapter: PinnedArtifact, head: PinnedArtifact) {
+    public init(
+        shards: [String: PinnedArtifact], adapter: PinnedArtifact, head: PinnedArtifact,
+        files: [String: PinnedArtifact] = [:]
+    ) {
         self.shards = shards
         self.adapter = adapter
         self.head = head
+        self.files = files
+    }
+
+    /// Checks each of ``files`` in `modelFolder` against its pin, its size
+    /// first and then its SHA-256. `JEVBackend` calls this before it parses
+    /// any of them.
+    func verifyFiles(in modelFolder: URL) throws {
+        for (name, pin) in files.sorted(by: { $0.key < $1.key }) {
+            let url = modelFolder.appendingPathComponent(name)
+            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+                throw JEVError.pinnedFile(name: name, reason: "it is missing or unreadable")
+            }
+            guard data.count == pin.byteCount else {
+                throw JEVError.pinnedFile(
+                    name: name, reason: "it has \(data.count) bytes; expected exactly \(pin.byteCount)")
+            }
+            let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard actual == pin.sha256 else {
+                throw JEVError.pinnedFile(name: name, reason: "its SHA-256 is \(actual); expected \(pin.sha256)")
+            }
+        }
     }
 
     /// `autotrust/JEV-9B` at revision `7ac669b8fb476ba926491e3d1c39f9330d68dbed`.
@@ -118,7 +190,23 @@ public struct JEVArtifacts: Equatable, Sendable {
         adapter: PinnedArtifact(
             byteCount: 160_486_456, sha256: "796386ace560ec5624bbfe83f5c505121e5c9f9654200a847f032cb333cd1f71"),
         head: PinnedArtifact(
-            byteCount: 393_464, sha256: "d960a6f5989402c6d08d74d8d435a21a031cc7878f3c4ac274a126c900f627e7")
+            byteCount: 393_464, sha256: "d960a6f5989402c6d08d74d8d435a21a031cc7878f3c4ac274a126c900f627e7"),
+        files: [
+            "config.json": PinnedArtifact(
+                byteCount: 2_292, sha256: "616e4e6b1ef1ca8b1832a1a8cb35d16a2281eb876c1bba5eb2cfb4960e496bbc"),
+            "model.safetensors.index.json": PinnedArtifact(
+                byteCount: 35_625, sha256: "44eea46667963a29cc2ae0ffc5d2e07df077057b284f6d9d31cb149f70aa4d21"),
+            "adapter/adapter_config.json": PinnedArtifact(
+                byteCount: 1_319, sha256: "9ec52bc006c17292f597c0ca331e978991ef7d2df3cd6f7cb89592869a36f476"),
+            "judge_config.json": PinnedArtifact(
+                byteCount: 1_435, sha256: "0ee2ce84743b646e1c493619a8b55f71b94660f3a599467a1b8942f0eb68d677"),
+            "calibration.json": PinnedArtifact(
+                byteCount: 1_007, sha256: "9644305e85fac82944ec4353742af9c0fbc6434a277d3f0e54c2abb185aaf9b8"),
+            "tokenizer.json": PinnedArtifact(
+                byteCount: 19_989_325, sha256: "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523"),
+            "tokenizer_config.json": PinnedArtifact(
+                byteCount: 1_124, sha256: "66e427c470fe580fe8c7b5725d857af23d8417e37fae62667ec698306a19987b"),
+        ]
     )
 }
 
@@ -141,11 +229,26 @@ public enum JEVPrompt {
     public static let maximumChoiceOptions = 16
     public static let scoreLevels = 6
 
-    /// The whole prompt for one question.
-    public static func render(kind: JEVKind, state: String, question: String, options: [String]) -> String {
-        let lines = kind == .choice
-            ? options.enumerated().map { "\(choiceLabels[$0.offset])) \($0.element)" }
-            : options
+    /// What each slot of `kind` answers with, in slot order: the option lines
+    /// of a noul or a score, and the letters that label a choice's.
+    static func labels(for kind: JEVKind) -> [String] {
+        switch kind {
+        case .noul: return ["false", "true"]
+        case .score: return (0..<scoreLevels).map(String.init)
+        case .choice: return choiceLabels
+        }
+    }
+
+    /// The whole prompt for one question. A choice's options are labelled
+    /// `A)` … `P)`, so more than 16 of them throw ``JEVError/tooManyOptions(count:maximum:)``.
+    public static func render(kind: JEVKind, state: String, question: String, options: [String]) throws -> String {
+        var lines = options
+        if kind == .choice {
+            guard options.count <= choiceLabels.count else {
+                throw JEVError.tooManyOptions(count: options.count, maximum: choiceLabels.count)
+            }
+            lines = zip(choiceLabels, options).map { "\($0)) \($1)" }
+        }
         return "[kind] \(kind.rawValue)\n[state] \(state)\n[question] \(question)\n[options]\n"
             + lines.joined(separator: "\n") + "\n[decision]:"
     }
@@ -155,10 +258,9 @@ public enum JEVPrompt {
     public static func options(for question: Question) -> (kind: JEVKind, keys: [String], texts: [String]) {
         switch question {
         case .noul:
-            return (.noul, ["false", "true"], ["false", "true"])
+            return (.noul, labels(for: .noul), labels(for: .noul))
         case .score:
-            let levels = (0..<scoreLevels).map(String.init)
-            return (.score, levels, levels)
+            return (.score, labels(for: .score), labels(for: .score))
         case .choice(let choice):
             // Each option is one line, so line breaks in its text become spaces.
             let texts = choice.criteria.map { option -> String in
@@ -268,11 +370,13 @@ public final class JEVBackend: DecisionBackend {
 
     /// Loads a JEV folder: `config.json`, the sharded backbone, the adapter,
     /// `head.safetensors`, `judge_config.json`, `calibration.json`, and the
-    /// tokenizer. Pass `artifacts: nil` to skip the byte-for-byte pins.
+    /// tokenizer. The pinned configs and tokenizer are checked first, before
+    /// anything is parsed. Pass `artifacts: nil` to skip the byte-for-byte pins.
     public convenience init(
         modelFolder: URL, modelID: String? = nil, artifacts: JEVArtifacts? = .jev9B,
         dataType: DType = .bfloat16, maxLength: Int = 4_096
     ) throws {
+        try artifacts?.verifyFiles(in: modelFolder)
         let configuration = try JEVConfiguration(modelFolder: modelFolder)
         let adapter = try LoRAAdapter(
             folder: modelFolder.appendingPathComponent(configuration.adapterSubfolder), pin: artifacts?.adapter)
@@ -382,11 +486,14 @@ public final class JEVBackend: DecisionBackend {
         return try trunk([ids], attention: DecoderAttention(lengths: [ids.count], plan: .causal))[0].asType(.float32)
     }
 
+    /// What a tokenizer decodes the bytes of an incomplete character to.
+    private static let replacement: Unicode.Scalar = "\u{FFFD}"
+
     /// Token ids of one prompt, cutting an over-long state to its head and tail.
     func encode(id: String, kind: JEVKind, state: String, question: String, options: [String]) throws -> [Int] {
-        let ids = tokenizer.encode(JEVPrompt.render(kind: kind, state: state, question: question, options: options))
+        let ids = tokenizer.encode(try JEVPrompt.render(kind: kind, state: state, question: question, options: options))
         guard ids.count > maxLength else { return ids }
-        let empty = tokenizer.encode(JEVPrompt.render(kind: kind, state: "", question: question, options: options))
+        let empty = tokenizer.encode(try JEVPrompt.render(kind: kind, state: "", question: question, options: options))
         guard empty.count <= maxLength else {
             throw JEVError.promptTooLong(id: id, tokens: empty.count, maximum: maxLength)
         }
@@ -394,9 +501,14 @@ public final class JEVBackend: DecisionBackend {
         var budget = min(maxLength - empty.count, stateIDs.count - 1)
         while budget > 0 {
             let head = budget * 3 / 5
-            let kept = tokenizer.decode(Array(stateIDs[..<head]))
-                + tokenizer.decode(Array(stateIDs[(stateIDs.count - (budget - head))...]))
-            let ids = tokenizer.encode(JEVPrompt.render(kind: kind, state: kept, question: question, options: options))
+            // A token slice can end inside a multi-byte character, which decodes
+            // to U+FFFD: drop those at the cut, so it falls between characters.
+            var front = Substring(tokenizer.decode(Array(stateIDs[..<head]))).unicodeScalars
+            while front.last == Self.replacement { front.removeLast() }
+            var back = Substring(tokenizer.decode(Array(stateIDs[(stateIDs.count - (budget - head))...]))).unicodeScalars
+            while back.first == Self.replacement { back.removeFirst() }
+            let kept = String(front) + String(back)
+            let ids = tokenizer.encode(try JEVPrompt.render(kind: kind, state: kept, question: question, options: options))
             if ids.count <= maxLength { return ids }
             // Re-tokenising across the cut can merge differently: shrink by the overshoot.
             budget -= ids.count - maxLength

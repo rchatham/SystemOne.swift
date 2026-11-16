@@ -227,18 +227,45 @@ weights.
     This legend is System One's convention: JEV's own server takes the
     question text as given.
   - A choice takes 1–16 options (`A)`–`P)`); a score must have exactly six levels.
+    The backend refuses any other question with
+    `SystemOneEngineError.invalidQuestion`. `JEVPrompt.render` throws
+    `JEVError.tooManyOptions` for a seventeenth choice option.
   - A one-option choice is answered with probability 1 and runs no forward.
   - States render as d3's do.
   - A prompt over `maxLength` tokens (default 4,096) keeps the first 60 % and
     last 40 % of its state's tokens, as JEV's own server truncates.
+    - Each cut falls between characters. A token slice that ends inside a
+      multi-byte character decodes to U+FFFD, which is dropped at the cut.
+    - A question that does not fit even with an empty state throws
+      `JEVError.promptTooLong`.
+- **Refused requests over HTTP:** `system-one serve` answers a question the
+  head cannot read, or a prompt that cannot fit, with 422 and the reason
+  (`{"detail": "Question 'urgency' is invalid: a JEV score has exactly 6
+  levels, 0 to 5"}`). See [Request rejections](#request-rejections).
 - **Weights:**
   - `LoRAAdapter` merges the adapter into each targeted linear as
     `Qwen35Trunk` loads it, exactly as peft's `merge_and_unload` does onto
     the bf16 base: `bf16(f32(W) + (α / r) · B @ A)`. Every adapter tensor must
     be used.
   - `loadsReadout: false` skips the untied `lm_head` (2 GB).
-  - `JEVArtifacts.jev9B` pins the shards, the adapter and the head at
-    revision `7ac669b8fb476ba926491e3d1c39f9330d68dbed`.
+  - `JEVArtifacts.jev9B` pins every file the backend reads at revision
+    `7ac669b8fb476ba926491e3d1c39f9330d68dbed`:
+    - the shards, the adapter and the head, hashed as they are mapped;
+    - `JEVArtifacts.files`: `config.json`, `model.safetensors.index.json`,
+      `adapter/adapter_config.json`, `judge_config.json`, `calibration.json`,
+      `tokenizer.json` and `tokenizer_config.json`. These are checked by size
+      and SHA-256 before any of them is parsed. A changed temperature, slot
+      range, LoRA scale or token id fails with `JEVError.pinnedFile`.
+    - `artifacts: nil` skips every pin, for a re-exported or fine-tuned folder.
+  - `JEVConfiguration` rejects a `judge_config.json` whose head it would
+    misread, pinned or not:
+    - a `softcap` that is not null (the head's logits are read as they are);
+    - a `weights_mode` other than `unmerged` (the adapter is merged at load,
+      so merged shards would get it twice);
+    - a `slots.verbalizers` list that does not give each kind's slots as the
+      prompt labels them: `false`, `true` for a noul, `0` … `5` for a score
+      and `A` … `P` for a choice, wherever `slots.ranges` puts them. A
+      config without the list is read by its ranges alone.
 - **Attention:** causal everywhere. Rows are right-padded and read at their
   own last token.
 - **Readout:**
@@ -254,6 +281,32 @@ weights.
   a noul is `P(true)`, and a score is the expected level.
 
 `system-one serve --backend jev --model-folder <snapshot>` serves it.
+
+### Request rejections
+
+An error that conforms to `RequestRejection` (in `SystemOne`) and returns a
+`rejectionReason` blames the request, not the server. `SystemOneHTTPServer`
+answers it with 422 and the reason as `detail`, cut to 1,024 characters.
+Every other handler error stays a bare 500 (`Internal Server Error`), so
+nothing about the server leaks.
+
+| Error | Over HTTP |
+|---|---|
+| `SystemOneEngineError.invalidQuestion`, `.unsupportedMedia`, and its empty-criteria and duplicate-key cases | 422 with the reason |
+| `JEVError.promptTooLong`, `.tooManyOptions` | 422 with the reason |
+| `D1PromptError.optionsDoNotFit`, `.mediaTooLong` | 422 with the reason |
+| `JEVError.invalidConfiguration`, `.invalidHead`, `.pinnedFile`; a logits provider that breaks its contract; any other error | 500, no detail |
+
+Every backend's question errors are covered. d3, d1-2B, d1-3B, DecisionTune,
+the marker heads and the tree decider already report a question they cannot
+read as `invalidQuestion`. Two kinds of error do not conform yet and stay 500:
+- media faults only an in-process caller can cause, such as a clip without a
+  sample rate (`LFM3AudioError`, `LFM3VLVideoError`, the placeholder cases of
+  `D1ChatError` and `D1SetError`). HTTP requests carry no media.
+- a trunk's own `sequenceTooLong`, which a d3 folder without `max_length`
+  can reach with a very long state.
+
+A new error opts in with one conformance.
 
 ### Verification
 
@@ -290,6 +343,8 @@ It writes two fixtures:
 | JEV-9B check (GPU) | Result |
 |---|---|
 | Tokenizer ids (15 texts) and `bare-v1` prompts (8 cases) | exact |
+| Pinned configs, shard index and tokenizer (7 files) against the snapshot | match |
+| States of characters the tokenizer splits, cut at 32 lengths | no U+FFFD |
 | bfloat16 decision probabilities vs the float32 reference | worst 0.0055 (bound 0.02); clear top answers kept |
 | `SystemOneEngine.jev` on the refund example | P(true) 0.991 ± 0.02 |
 | Folded meanings steer answers: score levels reversed, noul `true` narrowed | urgency 4.76 → 0.58; "return?" for a swap 0.90 → 0.05 |
