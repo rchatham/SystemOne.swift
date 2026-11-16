@@ -6,6 +6,8 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-16
+
 ### Added
 
 - JEV: `JEVBackend` (`--backend jev`) serves autotrust/JEV-9B, an open
@@ -291,6 +293,7 @@ against the Python reference at every stage.
 - Apache-2.0 with attribution in `THIRD_PARTY_NOTICES.md`. Model weights are
   user-generated via `tools/download_model.py` + `tools/convert_option_marker.py`.
 
-[Unreleased]: https://github.com/rchatham/SystemOne.swift/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/rchatham/SystemOne.swift/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/rchatham/SystemOne.swift/releases/tag/0.3.0
 [0.2.0]: https://github.com/rchatham/SystemOne.swift/releases/tag/0.2.0
 [0.1.0]: https://github.com/rchatham/SystemOne.swift/releases/tag/0.1.0
