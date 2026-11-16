@@ -82,13 +82,16 @@ Pinned by `Package.swift` / `Package.resolved`:
 | Package | Version | License |
 |---|---|---|
 | ml-explore/mlx-swift | 0.31.4 | MIT |
-| huggingface/swift-transformers | 1.1.6 | Apache-2.0 |
+| huggingface/swift-transformers | 1.1.9 | Apache-2.0 |
 | apple/swift-nio | 2.84.0 | Apache-2.0 |
 | apple/swift-atomics | 1.3.1 | Apache-2.0 |
 | apple/swift-collections | 1.7.0 | Apache-2.0 |
 | huggingface/swift-jinja | 2.5.1 | Apache-2.0 |
 | apple/swift-numerics | 1.1.1 | Apache-2.0 |
 | apple/swift-system | 1.8.1 | Apache-2.0 |
+| apple/swift-crypto | 4.5.2 | Apache-2.0 |
+| apple/swift-asn1 | 1.7.4 | Apache-2.0 |
+| ibireme/yyjson | 0.12.0 | MIT |
 | swiftlang/swift-syntax | 510.0.3 | Apache-2.0 |
 | rchatham/JSON.swift | 1.1.0 | Apache-2.0 |
 
