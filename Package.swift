@@ -19,9 +19,11 @@ let package = Package(
         .executable(name: "system-one-chat", targets: ["SystemOneChatCLI"]),
     ],
     dependencies: [
+        // A range, so apps that also use WhisperKit can share one version.
+        // Tokenizer parity is tested at the resolved version.
         .package(
             url: "https://github.com/huggingface/swift-transformers",
-            exact: "1.1.6"
+            .upToNextMinor(from: "1.1.6")
         ),
         .package(
             url: "https://github.com/ml-explore/mlx-swift",

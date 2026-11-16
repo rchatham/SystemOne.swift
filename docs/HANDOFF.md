@@ -86,7 +86,7 @@ Regenerate only when intentionally changing the oracle fixture:
 ## Phase 2 tokenizer
 
 `VonTokenizer` is a SystemOne-owned local-only wrapper around the `Tokenizers`
-product from `huggingface/swift-transformers` 1.1.6. It loads only an explicit
+product from `huggingface/swift-transformers` 1.1.x. It loads only an explicit
 model folder via `AutoTokenizer.from(modelFolder:)`; the public API exposes
 special-token-aware encoding, Python-compatible state token counts (including
 the empty-state clamp to one), exact `pack_sequence`, and packed text/ids/

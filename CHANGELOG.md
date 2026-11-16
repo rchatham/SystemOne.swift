@@ -6,6 +6,13 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
 
 ## [Unreleased]
 
+### Changed
+
+- `swift-transformers` is required as 1.1.6 up to the next minor version instead
+  of exactly 1.1.6, matching WhisperKit, so an app using both resolves one
+  version. `Package.resolved` moves to 1.1.9, where the tokenizer parity tests
+  pass unchanged.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added
