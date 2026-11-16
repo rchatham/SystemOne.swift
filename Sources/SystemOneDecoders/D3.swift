@@ -206,47 +206,6 @@ public enum D3Prompt {
     }
 }
 
-/// Answer assembly from code probabilities (`to_answer`, `product_answer`).
-enum D3Answers {
-    /// Softmax of `logits / temperature` in double precision.
-    static func probabilities(_ logits: [Float], temperature: Double) -> [Double] {
-        let scaled = logits.map { Double($0) / temperature }
-        let top = scaled.max() ?? 0
-        let weights = scaled.map { Foundation.exp($0 - top) }
-        let total = weights.reduce(0, +)
-        return weights.map { $0 / total }
-    }
-
-    /// One minus the normalized Shannon entropy, clamped to [0, 1].
-    static func confidence(_ probabilities: [Double]) -> Double {
-        guard probabilities.count >= 2 else { return 1 }
-        let entropy = -probabilities.reduce(0) { $1 > 0 ? $0 + $1 * Foundation.log($1) : $0 }
-        return max(0, min(1, 1 - entropy / Foundation.log(Double(probabilities.count))))
-    }
-
-    static func answer(_ question: Question, keys: [String], probabilities: [Double]) -> Answer {
-        switch question {
-        case .noul:
-            return .noul(NoulAnswer(noul: probabilities[1]))
-        case .choice:
-            var best = 0
-            for index in probabilities.indices.dropFirst() where probabilities[index] > probabilities[best] { best = index }
-            return .choice(ChoiceAnswer(
-                choice: keys[best],
-                probabilities: zip(keys, probabilities).map { ProbabilityEntry(key: $0, probability: $1) },
-                confidence: confidence(probabilities)
-            ))
-        case .score(let score):
-            return .score(ScoreAnswer(
-                score: probabilities.enumerated().reduce(0) { $0 + Double($1.offset) * $1.element },
-                confidence: confidence(probabilities),
-                legend: zip(keys, score.criteria).map { LegendEntry(key: $0, description: D3Prompt.canonical($1)) },
-                probabilities: zip(keys, probabilities).map { ProbabilityEntry(key: $0, probability: $1) }
-            ))
-        }
-    }
-}
-
 /// d3 (vllm-sr/d3, -lite, -mini, -flash, -edge, …) as a System One backend: a
 /// Qwen3.5 trunk read at the prompt's last token by a 255-way answer-code
 /// readout (`readout.safetensors`, `weight` `[255, hidden]`).
@@ -325,7 +284,7 @@ public final class D3Backend: DecisionBackend {
             }
             let temperature = configuration.temperature
             decisions.append(PlannedDecision(id: entry.id, rowIndices: [rows.count]) { logits in
-                D3Answers.answer(question, keys: keys, probabilities: D3Answers.probabilities(logits[0], temperature: temperature))
+                DecoderAnswers.answer(question, keys: keys, probabilities: DecoderAnswers.probabilities(logits[0], temperature: temperature))
             })
             rows.append(DecoderRow(ids: ids, optionCount: keys.count))
         }

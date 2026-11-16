@@ -59,7 +59,7 @@ public final class Qwen35Trunk {
     }
 
     private let embedding: Embedding
-    private let readout: Embedding
+    private let readout: Embedding?
     private let layers: [Layer]
     private let finalNorm: MLXArray
 
@@ -77,7 +77,15 @@ public final class Qwen35Trunk {
     /// published prefixes (`model.language_model.`, `language_model.`,
     /// `model.`, mlx-lm's `language_model.model.`). Vision and multi-token
     /// prediction tensors are ignored.
-    public init(store: any TensorStore, configuration: Qwen35Configuration, dataType: DType = .float32) throws {
+    ///
+    /// - Parameters:
+    ///   - adapter: a LoRA merged into the linear layers it targets as they load.
+    ///   - loadsReadout: `false` skips an untied language-model head, for models
+    ///     read through their own head; ``readoutRows(_:)`` then throws.
+    public init(
+        store: any TensorStore, configuration: Qwen35Configuration, dataType: DType = .float32,
+        adapter: LoRAAdapter? = nil, loadsReadout: Bool = true
+    ) throws {
         self.configuration = configuration
         self.dataType = dataType
         let prefix = try Self.prefix(in: store)
@@ -98,6 +106,10 @@ public final class Qwen35Trunk {
         func linear(_ name: String, _ output: Int, _ input: Int, bias: Bool = false) throws -> Linear {
             try check("\(name).weight", [output, input])
             if bias { try check("\(name).bias", [output]) }
+            if let adapter {
+                return try adapter.linear(
+                    name, base: store, inputWidth: input, outputWidth: output, bias: bias, dataType: dataType)
+            }
             return try store.linear(name, inputWidth: input, bias: bias, dataType: dataType)
         }
         /// A norm weight in float32, with transformers' `+ 1` folded in.
@@ -116,6 +128,8 @@ public final class Qwen35Trunk {
         embedding = input
         if c.tieWordEmbeddings {
             readout = input
+        } else if !loadsReadout {
+            readout = nil
         } else {
             let head = try Self.headPrefix(in: store, trunkPrefix: prefix)
             try check("\(head).weight", [c.vocabSize, d])
@@ -167,6 +181,7 @@ public final class Qwen35Trunk {
             )
         }
         finalNorm = try norm("\(prefix)norm.weight", d)
+        try adapter?.requireAllUsed()
     }
 
     // MARK: - Public forward passes
@@ -200,6 +215,7 @@ public final class Qwen35Trunk {
     /// or the input embeddings when tied), dequantized. A readout's logits are
     /// `hidden · rowsᵀ`.
     public func readoutRows(_ ids: [Int]) throws -> MLXArray {
+        guard let readout else { throw DecoderError.noReadout }
         for id in ids where !(0..<configuration.vocabSize).contains(id) {
             throw DecoderError.invalidTokenID(row: 0, column: 0, value: id)
         }

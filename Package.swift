@@ -178,6 +178,7 @@ let package = Package(
                 "SystemOne",
                 "SystemOneDecoders",
                 .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

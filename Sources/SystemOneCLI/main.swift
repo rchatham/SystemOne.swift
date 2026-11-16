@@ -51,6 +51,7 @@ private enum Backend: String, CaseIterable {
     case d1Chat = "d1-3b"
     case d1Set = "d1-2b"
     case d3
+    case jev
     case decisionTune = "decisiontune"
     case markerHead = "marker"
     case treeDecider = "tree"
@@ -75,6 +76,7 @@ private let usage = """
       d1-2b          LiquidAI d1-2B or d1-Omni-2B, noul / choice / score on text,
                      pictures, and (d1-Omni-2B) audio
       d3             vllm-sr d3, d3-lite, d3-edge, ...
+      jev            autotrust/JEV-9B (pinned), noul / choice / score on text
       decisiontune   DecisionTune 1.0
       marker         Laya or Julia-1
       tree           tasksource-decider-nano
@@ -301,6 +303,9 @@ private func run() async throws {
         case .d3:
             engine = try SystemOneEngine.d3(modelFolder: folder)
             options = 255
+        case .jev:
+            engine = try SystemOneEngine.jev(modelFolder: folder)
+            options = JEVPrompt.maximumChoiceOptions
         case .decisionTune:
             engine = try SystemOneEngine.decisionTune(modelFolder: folder)
             options = 64
