@@ -31,6 +31,13 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   never reads.
 - `ReversibleDecoderTokenizer` (`HubDecoderTokenizer.decode`).
 
+### Changed
+
+- `swift-transformers` is required as 1.1.6 up to the next minor version instead
+  of exactly 1.1.6, matching WhisperKit, so an app using both resolves one
+  version. `Package.resolved` moves to 1.1.9, where the tokenizer parity tests
+  pass unchanged.
+
 ### Fixed
 
 - d1-omni float16 on the CPU under macOS 27: every option after a batch's
