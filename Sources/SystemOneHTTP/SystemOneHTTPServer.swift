@@ -936,6 +936,9 @@ private final class SystemOneHTTPChannelHandler: ChannelInboundHandler, @uncheck
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
 
+    /// The most characters of a `RequestRejection` reason a 422 body carries.
+    static let maximumRejectionDetailLength = 1_024
+
     private let configuration: SystemOneHTTPServerConfiguration
     private let codec: SystemOneWireCodec
     private let modelHandler: SystemOneHTTPHandler
@@ -1240,12 +1243,20 @@ private final class SystemOneHTTPChannelHandler: ChannelInboundHandler, @uncheck
                                 status: .gatewayTimeout, body: Data(), origin: origin,
                                 keepAlive: false)
                     } catch {
+                        // A request the model refuses names its reason; anything
+                        // else stays sanitized.
+                        let reason = (error as? any RequestRejection)?.rejectionReason
+                        let status: HTTPResponseStatus =
+                            reason == nil ? .internalServerError : .unprocessableEntity
+                        let detail =
+                            reason.map {
+                                String($0.prefix(SystemOneHTTPChannelHandler.maximumRejectionDetailLength))
+                            }
+                            ?? "Internal Server Error"
                         response =
-                            self?.jsonError(
-                                .internalServerError, "Internal Server Error", origin, keepAlive)
+                            self?.jsonError(status, detail, origin, keepAlive)
                             ?? OutboundResponse(
-                                status: .internalServerError, body: Data(), origin: origin,
-                                keepAlive: false)
+                                status: status, body: Data(), origin: origin, keepAlive: false)
                     }
                     await gate.release()
                 case .rejected:

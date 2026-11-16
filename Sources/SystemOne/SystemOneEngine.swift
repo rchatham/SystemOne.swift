@@ -68,6 +68,32 @@ extension SystemOneEngineError: LocalizedError {
     }
 }
 
+/// An error that blames the request, not the server: a question the model
+/// cannot read, media it does not accept, a prompt that cannot fit.
+///
+/// `SystemOneHTTPServer` answers a handler error that has a
+/// ``rejectionReason`` with 422 and that reason; every other error stays a
+/// bare 500. Conform an error whose message is safe to show the caller, and
+/// return `nil` for the cases that are the server's own fault.
+public protocol RequestRejection: Error {
+    /// Why the request cannot be answered, or `nil` when this error is not
+    /// the request's fault.
+    var rejectionReason: String? { get }
+}
+
+extension SystemOneEngineError: RequestRejection {
+    public var rejectionReason: String? {
+        switch self {
+        case .emptyChoiceOptions, .emptyScoreLevels, .duplicateStateFieldKey, .duplicateChoiceKey,
+             .duplicateQuestionID, .unsupportedMedia, .invalidQuestion:
+            return errorDescription
+        case .unexpectedMaskCount, .unexpectedLogitCount, .unexpectedBatchOffsets:
+            // A logits provider broke its contract.
+            return nil
+        }
+    }
+}
+
 /// Local, actor-isolated System One inference engine.
 ///
 /// The engine owns what every model shares: input validation, planning every

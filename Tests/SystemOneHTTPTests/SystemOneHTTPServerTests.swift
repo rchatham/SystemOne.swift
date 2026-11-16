@@ -2,6 +2,7 @@ import Foundation
 import NIOCore
 import NIOPosix
 import SystemOne
+import SystemOneD1
 import XCTest
 
 @testable import SystemOneHTTP
@@ -314,6 +315,73 @@ final class SystemOneHTTPServerTests: XCTestCase {
             XCTAssertEqual(
                 String(decoding: response.body, as: UTF8.self),
                 #"{"detail":"Internal Server Error"}"#)
+        }
+    }
+
+    func testHandlerRejectionsReturn422WithTheirReason() async throws {
+        struct Rejection: RequestRejection { let rejectionReason: String? }
+        try await withServer(handler: { request in
+            switch request.questions[0].id {
+            case "levels":
+                throw SystemOneEngineError.invalidQuestion(
+                    id: "levels", reason: "a JEV score has exactly 6 levels, 0 to 5")
+            case "media":
+                throw SystemOneEngineError.unsupportedMedia(model: "jev")
+            case "options":
+                throw D1PromptError.optionsDoNotFit(questionID: "options")
+            case "long":
+                throw Rejection(rejectionReason: "Question long needs 5000 tokens without its state; the limit is 4096.")
+            case "quoted":
+                throw Rejection(rejectionReason: "a \"quoted\"\nreason")
+            case "huge":
+                throw Rejection(rejectionReason: String(repeating: "x", count: 5_000))
+            case "silent":
+                throw Rejection(rejectionReason: nil)
+            case "provider":
+                throw SystemOneEngineError.unexpectedLogitCount(expected: 2, actual: 1)
+            default:
+                return SystemOneResponse(model: request.model, answers: [], usage: .init())
+            }
+        }) { baseURL in
+            let endpoint = baseURL.appendingPathComponent("v1/systemone")
+            func post(_ id: String) async throws -> (status: Int, body: String, detail: String?) {
+                let body = #"{"state":"ship","questions":{"\#(id)":{"instructions":"Choose","criteria":{"a":null,"b":null}}}}"#
+                let response = try await self.request(endpoint, method: "POST", body: Data(body.utf8))
+                let object = try JSONSerialization.jsonObject(with: response.body) as? [String: Any]
+                return (response.status, String(decoding: response.body, as: UTF8.self), object?["detail"] as? String)
+            }
+
+            let levels = try await post("levels")
+            XCTAssertEqual(levels.status, 422)
+            XCTAssertEqual(
+                levels.body,
+                #"{"detail":"Question 'levels' is invalid: a JEV score has exactly 6 levels, 0 to 5"}"#)
+            let media = try await post("media")
+            XCTAssertEqual(media.status, 422)
+            XCTAssertEqual(media.body, #"{"detail":"Model jev does not accept this media."}"#)
+            // Any backend's error can opt in, not only the engine's or JEV's.
+            let options = try await post("options")
+            XCTAssertEqual(options.status, 422)
+            XCTAssertEqual(options.detail, "The options of question 'options' do not fit in the context.")
+            let long = try await post("long")
+            XCTAssertEqual(long.status, 422)
+            XCTAssertEqual(long.detail, "Question long needs 5000 tokens without its state; the limit is 4096.")
+            let quoted = try await post("quoted")
+            XCTAssertEqual(quoted.status, 422)
+            XCTAssertEqual(quoted.detail, "a \"quoted\"\nreason")
+            // The reason is the handler's text, so its length is bounded.
+            let huge = try await post("huge")
+            XCTAssertEqual(huge.status, 422)
+            XCTAssertEqual(huge.detail, String(repeating: "x", count: 1_024))
+
+            // Errors without a reason stay sanitized.
+            for id in ["silent", "provider"] {
+                let response = try await post(id)
+                XCTAssertEqual(response.status, 500, id)
+                XCTAssertEqual(response.body, #"{"detail":"Internal Server Error"}"#, id)
+            }
+            let served = try await post("fine")
+            XCTAssertEqual(served.status, 200)
         }
     }
 
