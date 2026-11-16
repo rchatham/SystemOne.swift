@@ -10,5 +10,5 @@
 ///   6. Optional HTTP server with /v1/systemone parity
 
 public enum SystemOneLibrary {
-    public static let version = "0.1.0"
+    public static let version = "0.2.0"
 }
