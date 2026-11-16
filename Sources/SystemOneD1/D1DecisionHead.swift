@@ -56,7 +56,14 @@ final class D1DecisionHead {
         let p = parameters ?? self.parameters
         // `nn.Linear`, computed as MLXNN's `Linear` does.
         func linear(_ x: MLXArray, _ name: String) -> MLXArray {
-            addMM(p["\(name).bias"]!, x, p["\(name).weight"]!.T)
+            let weight = p["\(name).weight"]!
+            let bias = p["\(name).bias"]!
+            // MLX runs float16 CPU matmuls through Accelerate's BNNS, which on
+            // macOS 27 adds the bias of a one-column product (32 inputs or
+            // more) to its first row only: every option after a batch's first
+            // would lose the scorer's bias. A matmul alone is unaffected.
+            if weight.dim(0) == 1, x.dtype == .float16 { return matmul(x, weight.T) + bias }
+            return addMM(bias, x, weight.T)
         }
         func layerNorm(_ x: MLXArray, _ name: String) -> MLXArray {
             MLXFast.layerNorm(x, weight: p["\(name).weight"]!, bias: p["\(name).bias"]!, eps: Self.normEpsilon)

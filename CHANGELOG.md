@@ -38,6 +38,14 @@ All notable changes to SystemOne (formerly VonSwift) are documented here. The pr
   version. `Package.resolved` moves to 1.1.9, where the tokenizer parity tests
   pass unchanged.
 
+### Fixed
+
+- d1-omni float16 on the CPU under macOS 27: every option after a batch's
+  first lost the scorer's bias, because Accelerate's BNNS (MLX's float16 CPU
+  matmul) adds the bias of a one-column product to its first row only. The
+  decision head now adds that bias after a plain matmul. float32 and the GPU
+  were never affected.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added
