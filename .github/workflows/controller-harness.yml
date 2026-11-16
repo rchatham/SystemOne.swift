@@ -1,0 +1,42 @@
+name: Controller harness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/controller_harness/**'
+      - '.github/workflows/controller-harness.yml'
+  pull_request:
+    paths:
+      - 'tools/controller_harness/**'
+      - '.github/workflows/controller-harness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: tools/controller_harness
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Run unit tests
+        run: python -m unittest -v
+      - name: Verify reproducible fixtures
+        run: |
+          python build_cases.py
+          git diff --exit-code -- cases.jsonl
+      - name: Run scripted infrastructure self-test
+        run: |
+          output_dir="$(mktemp -d "$RUNNER_TEMP/controller-harness.XXXXXX")"
+          trap 'rm -rf -- "$output_dir"' EXIT
+          python harness.py --self-test --repeats 3 --out "$output_dir"
